@@ -26,7 +26,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 app = Flask(__name__)
-SERVER_PORT = 9238  # Port Konfiguration
+SERVER_PORT = 8000  # Port Konfiguration (Standard HTTP Alternativ-Port)
 
 # Supabase Client
 SUPABASE_URL = os.getenv('SUPABASE_URL')
