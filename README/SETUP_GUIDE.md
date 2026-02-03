@@ -24,12 +24,14 @@
 2. Klicke auf **Create a new bucket**
 
 **Bucket 1: person-photos**
+
 - Name: `person-photos`
 - Public bucket: ✅ **JA** (aktivieren!)
 - File size limit: 5 MB
 - Allowed MIME types: `image/jpeg,image/png`
 
 **Bucket 2: detection-snapshots**
+
 - Name: `detection-snapshots`
 - Public bucket: ✅ **JA** (aktivieren!)
 - File size limit: 2 MB
@@ -38,6 +40,7 @@
 ### 1.3 Storage Policies setzen
 
 Für jeden Bucket:
+
 1. Klicke auf den Bucket
 2. Klicke auf **Policies**
 3. Klicke auf **New Policy**
@@ -78,6 +81,7 @@ pip3 install dlib --no-cache-dir
 ```
 
 **Alternative (wenn dlib nicht kompiliert):**
+
 ```bash
 # Verwende vorcompilierte Version
 sudo apt-get install python3-dlib
@@ -89,11 +93,13 @@ pip3 install face-recognition --no-deps
 ## 🚀 Schritt 3: Server starten
 
 ### Auf dem Mac (zum Testen):
+
 ```bash
 python3 project_kamera.py
 ```
 
 ### Auf dem Pi-Top:
+
 ```bash
 python3 project_kamera.py
 ```
@@ -138,11 +144,13 @@ Der Server startet auf: `http://0.0.0.0:8080`
 ### Problem: "dlib installation failed"
 
 **Lösung 1:** Verwende vorcompilierte Version
+
 ```bash
 sudo apt-get install python3-dlib
 ```
 
 **Lösung 2:** Kompiliere mit mehr Speicher
+
 ```bash
 # Erhöhe Swap auf Pi
 sudo dphys-swapfile swapoff
@@ -158,6 +166,7 @@ pip3 install dlib --no-cache-dir
 ### Problem: "No face detected"
 
 **Lösung:**
+
 - Stelle sicher, dass genug Licht vorhanden ist
 - Schaue direkt in die Kamera
 - Entferne Sonnenbrillen/Masken
@@ -166,6 +175,7 @@ pip3 install dlib --no-cache-dir
 ### Problem: "Supabase connection failed"
 
 **Lösung:**
+
 - Prüfe `.env` Datei
 - Stelle sicher, dass die Credentials korrekt sind
 - Prüfe Internetverbindung
@@ -174,6 +184,7 @@ pip3 install dlib --no-cache-dir
 ### Problem: "Person wird nicht erkannt"
 
 **Lösung:**
+
 - Confidence Threshold anpassen in `.env`
 - Mehr Trainingsfotos von verschiedenen Winkeln
 - Bessere Beleuchtung beim Enrollment
@@ -185,6 +196,7 @@ pip3 install dlib --no-cache-dir
 ### Alte Daten manuell löschen (älter als 30 Tage)
 
 Im Supabase SQL Editor:
+
 ```sql
 SELECT cleanup_old_detections();
 ```
@@ -211,6 +223,7 @@ GROUP BY p.name;
 ## 🎓 Für das Schulprojekt
 
 ### Wichtige Features:
+
 - ✅ 30-Tage Datenspeicherung (automatisch)
 - ✅ Timestamps für jede Erkennung
 - ✅ Statistiken und Reports
@@ -218,6 +231,7 @@ GROUP BY p.name;
 - ✅ Web-Interface für Verwaltung
 
 ### Präsentations-Tipps:
+
 1. Zeige das Dashboard mit Statistiken
 2. Demonstriere Live-Erkennung
 3. Erkläre die 30-Tage-Regel
@@ -233,5 +247,3 @@ GROUP BY p.name;
 3. ✅ Server starten
 4. ✅ Erste Person registrieren
 5. ✅ Testen!
-
-**Viel Erfolg mit dem Schulprojekt! 🎉**
