@@ -26,6 +26,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 app = Flask(__name__)
+SERVER_PORT = 9238  # Port Konfiguration
 
 # Supabase Client
 SUPABASE_URL = os.getenv('SUPABASE_URL')
@@ -1048,19 +1049,19 @@ def main():
     cleanup_old_detections()
     
     print("\n🌐 Server-URLs:")
-    print("   Lokal:        http://localhost:8080")
-    print("   Netzwerk:     http://0.0.0.0:8080")
+    print(f"   Lokal:        http://localhost:{SERVER_PORT}")
+    print(f"   Netzwerk:     http://0.0.0.0:{SERVER_PORT}")
     print("\n📡 Seiten:")
-    print("   Live-Stream:  http://localhost:8080/")
-    print("   Enrollment:   http://localhost:8080/enroll")
-    print("   Dashboard:    http://localhost:8080/dashboard")
+    print(f"   Live-Stream:  http://localhost:{SERVER_PORT}/")
+    print(f"   Enrollment:   http://localhost:{SERVER_PORT}/enroll")
+    print(f"   Dashboard:    http://localhost:{SERVER_PORT}/dashboard")
     print("\n⏹️  Drücke Ctrl+C zum Beenden")
     print("=" * 60)
     
     try:
         app.run(
             host='0.0.0.0',
-            port=8080,
+            port=SERVER_PORT,
             debug=False,
             threaded=True,
             use_reloader=False
