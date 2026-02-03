@@ -54,26 +54,163 @@ except Exception as e:
     buzzer = None
     print(f"⚠️ Buzzer Fehler: {e}")
 
-# I2C LCD Setup (Standard Grove LCD 16x2)
-class LCD16x2:
-    def __init__(self, address=0x3e): # 0x3e is typical for Grove RGB LCD
+# I2C Treiber für Grove LCD 16x2 & Keypad (MPR121)
+class HardwareManager:
+    def __init__(self):
         try:
             from smbus2 import SMBus
             self.bus = SMBus(1)
-            self.address = address
-            print(f"📟 LCD initialisiert auf I2C 0x{address:02x}")
-        except:
+            self.lcd_address = 0x3e  # LCD Controller
+            self.rgb_address = 0x62  # RGB Backlight
+            self.keypad_address = 0x5a # MPR121
+            self.init_lcd()
+            self.init_keypad()
+            print("📟 Hardware (LCD & Keypad) initialisiert")
+        except Exception as e:
             self.bus = None
-            print("⚠️ LCD (smbus2) nicht verfügbar")
+            print(f"⚠️ Hardware Initialisierung fehlgeschlagen: {e}")
 
-    def write_message(self, line1, line2=""):
+    def init_lcd(self):
         if not self.bus: return
-        print(f"📟 LCD: [{line1}] / [{line2}]")
-        # Hier käme die I2C Protokoll Logik für das Display
-        # Da es viele verschiedene LCDs gibt, halten wir es als Mock/Log
-        # In einer echten Umgebung müssten hier die Register-Writes stehen.
+        try:
+            # LCD Initialisierungs-Sequenz (Standard HD44780 über I2C)
+            def command(cmd):
+                self.bus.write_byte_data(self.lcd_address, 0x80, cmd)
+            
+            time.sleep(0.05)
+            command(0x38) # 2 lines, 5x8 font
+            time.sleep(0.05)
+            command(0x0C) # display on, cursor off
+            time.sleep(0.05)
+            command(0x01) # clear
+            time.sleep(0.05)
+            command(0x06) # entry mode set
+            
+            # RGB Backlight auf Weiß (Standard)
+            self.bus.write_byte_data(self.rgb_address, 0x00, 0x00)
+            self.bus.write_byte_data(self.rgb_address, 0x01, 0x00)
+            self.bus.write_byte_data(self.rgb_address, 0x08, 0xAA)
+            self.bus.write_byte_data(self.rgb_address, 0x04, 255) # R
+            self.bus.write_byte_data(self.rgb_address, 0x03, 255) # G
+            self.bus.write_byte_data(self.rgb_address, 0x02, 255) # B
+        except: pass
 
-lcd_display = LCD16x2()
+    def init_keypad(self):
+        if not self.bus: return
+        try:
+            # MPR121 Reset & Config (Auszug)
+            self.bus.write_byte_data(self.keypad_address, 0x80, 0x63) # Soft reset
+            time.sleep(0.01)
+            self.bus.write_byte_data(self.keypad_address, 0x5e, 0x00) # Stop mode
+            # Schwellenwerte für Touch
+            for i in range(12):
+                self.bus.write_byte_data(self.keypad_address, 0x41 + 2*i, 12) # Touch th
+                self.bus.write_byte_data(self.keypad_address, 0x42 + 2*i, 6)  # Release th
+            self.bus.write_byte_data(self.keypad_address, 0x5e, 0x0c) # Start (12 electrodes)
+        except: pass
+
+    def write_lcd(self, line1, line2=""):
+        if not self.bus: return
+        try:
+            # Clear & Home
+            self.bus.write_byte_data(self.lcd_address, 0x80, 0x01)
+            time.sleep(0.01)
+            # Line 1
+            self.bus.write_byte_data(self.lcd_address, 0x80, 0x80)
+            for char in line1[:16]:
+                self.bus.write_byte_data(self.lcd_address, 0x40, ord(char))
+            # Line 2
+            self.bus.write_byte_data(self.lcd_address, 0x80, 0xc0)
+            for char in line2[:16]:
+                self.bus.write_byte_data(self.lcd_address, 0x40, ord(char))
+        except: pass
+
+    def set_lcd_color(self, r, g, b):
+        if not self.bus: return
+        try:
+            self.bus.write_byte_data(self.rgb_address, 0x04, r)
+            self.bus.write_byte_data(self.rgb_address, 0x03, g)
+            self.bus.write_byte_data(self.rgb_address, 0x02, b)
+        except: pass
+
+    def read_keypad(self):
+        if not self.bus: return 0
+        try:
+            # MPR121 Status Register 0x00 & 0x01 (12 bits)
+            lsb = self.bus.read_byte_data(self.keypad_address, 0x00)
+            msb = self.bus.read_byte_data(self.keypad_address, 0x01)
+            return (msb << 8) | lsb
+        except: return 0
+
+hw = HardwareManager()
+hardware_pin_buffer = ""
+last_key_state = 0
+
+def physical_hardware_loop():
+    """
+    Thread der das physikalische Keypad überwacht
+    """
+    global hardware_pin_buffer, last_key_state
+    
+    # Mapping für Grove Touch Keypad (Beispielhaft)
+    key_map = {
+        1: "1", 2: "2", 4: "3", 
+        8: "4", 16: "5", 32: "6", 
+        64: "7", 128: "8", 256: "9", 
+        512: "*", 1024: "0", 2048: "#"
+    }
+    
+    hw.write_lcd("System Bereit", "Warte auf Gesicht")
+
+    while is_running:
+        raw_state = hw.read_keypad()
+        
+        # Nur Reagieren bei neuem Tastendruck (Rising Edge)
+        if raw_state != 0 and last_key_state == 0:
+            key = key_map.get(raw_state)
+            if key:
+                if key == "#": # Enter
+                    if last_detected_person["id"]:
+                        verify_physical_pin(last_detected_person["id"], hardware_pin_buffer)
+                    hardware_pin_buffer = ""
+                elif key == "*": # Clear
+                    hardware_pin_buffer = ""
+                    hw.write_lcd("Eingabe geloescht")
+                else: # Nummer
+                    if len(hardware_pin_buffer) < 4:
+                        hardware_pin_buffer += key
+                    hw.write_lcd("PIN: " + ("*" * len(hardware_pin_buffer)))
+        
+        last_key_state = raw_state
+        time.sleep(0.05)
+
+def verify_physical_pin(person_id, pin):
+    """
+    Hilfsfunktion für das physikalische Keypad (nutzt API Logik)
+    """
+    try:
+        response = supabase.table('persons').select('pin, name, employee_number').eq('id', person_id).execute()
+        if not response.data: return
+        
+        user = response.data[0]
+        if str(user.get('pin')) == pin:
+            print(f"✅ Physikalischer PIN korrekt für {user['name']}")
+            hw.set_lcd_color(0, 255, 0)
+            hw.write_lcd(f"Hallo {user['name']}", f"ID: {user.get('employee_number', '---')}")
+            if buzzer: buzzer.beep(0.2, 0, 1)
+        else:
+            print(f"❌ Physikalischer PIN falsch!")
+            hw.set_lcd_color(255, 0, 0)
+            hw.write_lcd("FEHLER", "Falscher PIN")
+            if buzzer: buzzer.beep(0.6, 0, 1)
+            send_discord_alert(f"⚠️ **Keypad FEHLER**: Falscher PIN für {user['name']}")
+            
+        # Nach 3 Sek zurück zu Normal
+        time.sleep(3)
+        hw.set_lcd_color(255, 255, 255)
+        hw.write_lcd("Warte auf Gesicht")
+    except Exception as e:
+        print(f"Error: {e}")
 
 
 
@@ -1396,7 +1533,12 @@ def main():
     ai_connector = threading.Thread(target=ai_worker_thread, daemon=True)
     ai_connector.start()
     
+    # 🚀 Starte Hardware Loop
+    hw_thread = threading.Thread(target=physical_hardware_loop, daemon=True)
+    hw_thread.start()
+    
     print("\n🌐 Server-URLs:")
+
     print(f"   Lokal:        http://localhost:{SERVER_PORT}")
     print(f"   Netzwerk:     http://0.0.0.0:{SERVER_PORT}")
     print("\n📡 Seiten:")
