@@ -42,8 +42,10 @@ unknown_face_counter = 0
 UNKNOWN_THRESHOLD = 15  # Ca. 2-3 Sekunden durchgehend unbekannt vor Alarm
 
 # Globale Variablen
+# Globale Variablen
 camera = None
 camera_lock = threading.Lock()
+current_frame = None
 processing_lock = threading.Lock() # Lock für Face Recognition (verhindert Segfaults)
 camera_info = {
     'index': -1,
