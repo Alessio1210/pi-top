@@ -378,7 +378,7 @@ def initialize_camera():
     print("\n⚙️  Konfiguriere Kamera-Einstellungen...")
     camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-    camera.set(cv2.CAP_PROP_FPS, 60) # Versuch auf 60 FPS zu setzen
+    camera.set(cv2.CAP_PROP_FPS, 30) # Zurück auf 30 FPS für Stabilität
     camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     
     camera_info['width'] = int(camera.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -402,13 +402,22 @@ def generate_frames():
         yield b'--frame\r\nContent-Type: text/plain\r\n\r\nKeine Kamera verfuegbar\r\n'
         return
     
+    fail_count = 0
+    
     while True:
         with camera_lock:
             success, frame = camera.read()
             
             if not success:
-                print("⚠️ Fehler beim Lesen des Kamera-Frames")
-                break
+                fail_count += 1
+                if fail_count > 10:
+                    print("⚠️ Fehler beim Lesen des Kamera-Frames (Gibt auf nach 10 Versuchen)")
+                    break
+                # Kurze Pause und Retry
+                time.sleep(0.1)
+                continue
+            
+            fail_count = 0 # Reset bei Erfolg
             
             # 1. Update Globals (für Enrollment & AI)
             current_frame = frame  # Referenz (schnell)
