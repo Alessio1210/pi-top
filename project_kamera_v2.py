@@ -454,14 +454,6 @@ def generate_frames():
             if ret:
                 yield (b'--frame\r\n'
                        b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
-            
-            # Frame in JPEG konvertieren
-            ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
-            
-            if ret:
-                frame_bytes = buffer.tobytes()
-                yield (b'--frame\r\n'
-                       b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
 
 # ============================================================
 # FLASK ROUTES
