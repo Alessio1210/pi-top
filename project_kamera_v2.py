@@ -152,34 +152,54 @@ def physical_hardware_loop():
     """
     global hardware_pin_buffer, last_key_state
     
-    # Mapping für Grove Touch Keypad (Beispielhaft)
+    # Mapping für Grove Touch Keypad (MPR121)
+    # Bit 0 = 1, Bit 1 = 2, Bit 2 = 3, etc.
     key_map = {
         1: "1", 2: "2", 4: "3", 
         8: "4", 16: "5", 32: "6", 
         64: "7", 128: "8", 256: "9", 
-        512: "*", 1024: "0", 2048: "#"
+        1024: "0", 512: "*", 2048: "#"
     }
     
-    hw.write_lcd("System Bereit", "Warte auf Gesicht")
+    print("⌨️  Keypad-Überwachung aktiv. Drücke Tasten am Gerät...")
+    hw.set_lcd_color(255, 255, 255) # Weiß
+    hw.write_lcd("Bereit", "PIN eingeben:")
 
     while is_running:
         raw_state = hw.read_keypad()
         
-        # Nur Reagieren bei neuem Tastendruck (Rising Edge)
+        # Wenn eine Taste gedrückt wurde (und vorher keine gedrückt war)
         if raw_state != 0 and last_key_state == 0:
+            print(f"🔘 Keypad Bitmaske: {raw_state}") # Debug für die Konsole
+            
             key = key_map.get(raw_state)
             if key:
-                if key == "#": # Enter
+                print(f"👉 Taste gedrückt: {key}")
+                
+                if key == "#": # ENTER
+                    print(f"🚀 PIN abgeschickt: {hardware_pin_buffer}")
                     if last_detected_person["id"]:
                         verify_physical_pin(last_detected_person["id"], hardware_pin_buffer)
+                    else:
+                        hw.write_lcd("Kein Gesicht", "erkannt!")
+                        time.sleep(2)
+                        hw.write_lcd("Bereit", "PIN eingeben:")
                     hardware_pin_buffer = ""
-                elif key == "*": # Clear
+                    
+                elif key == "*": # CLEAR
                     hardware_pin_buffer = ""
-                    hw.write_lcd("Eingabe geloescht")
-                else: # Nummer
+                    print("🧹 PIN gelöscht")
+                    hw.write_lcd("Geloescht", "")
+                    time.sleep(1)
+                    hw.write_lcd("Bereit", "PIN eingeben:")
+                    
+                else: # NUMMER
                     if len(hardware_pin_buffer) < 4:
                         hardware_pin_buffer += key
-                    hw.write_lcd("PIN: " + ("*" * len(hardware_pin_buffer)))
+                    
+                    # DEBUG: Zeige die echten Zahlen statt Sternchen
+                    print(f"📟 Aktuelle Eingabe: {hardware_pin_buffer}")
+                    hw.write_lcd("PIN Eingabe:", hardware_pin_buffer)
         
         last_key_state = raw_state
         time.sleep(0.05)
@@ -831,46 +851,8 @@ def index():
                 margin-top: 5px;
             }
 
-            /* PIN PAD OVERLAY */
-            #pinOverlay {
-                display: none;
-                position: absolute;
-                top: 0; left: 0; width: 100%; height: 100%;
-                background: rgba(0,0,0,0.85);
-                color: white;
-                flex-direction: column;
-                justify-content: center;
-                align-items: center;
-                z-index: 100;
-                backdrop-filter: blur(5px);
-            }
-            .pin-grid {
-                display: grid;
-                grid-template-columns: repeat(3, 70px);
-                gap: 15px;
-                margin-top: 20px;
-            }
-            .pin-btn {
-                width: 70px; height: 70px;
-                border-radius: 50%;
-                border: 2px solid white;
-                background: none;
-                color: white;
-                font-size: 24px;
-                cursor: pointer;
-                transition: all 0.2s;
-            }
-            .pin-btn:hover { background: rgba(255,255,255,0.2); }
-            .pin-btn:active { transform: scale(0.9); }
-            .pin-display {
-                font-size: 32px;
-                letter-spacing: 15px;
-                margin: 20px 0;
-                height: 40px;
-            }
-            .pin-msg { font-size: 18px; margin-bottom: 10px; text-align: center; }
+            /* PIN PAD OVERLAY ENTFERNT - NUR PHYSIKALISCH */
         </style>
-
     </head>
     <body>
         <h1>🎯 Pi-Top Face Recognition</h1>
@@ -878,29 +860,8 @@ def index():
         <div class="container">
             <div class="video-container">
                 <img id="videoStream" src="{{ url_for('video_feed') }}" alt="Kamera Stream">
-                
-                <!-- PIN PAD OVERLAY -->
-                <div id="pinOverlay">
-                    <div class="pin-msg" id="pinUserMsg">Hallo Alessio</div>
-                    <div class="pin-msg">Bitte PIN eingeben:</div>
-                    <div class="pin-display" id="pinDisplay">****</div>
-                    <div class="pin-grid">
-                        <button class="pin-btn" onclick="addPin('1')">1</button>
-                        <button class="pin-btn" onclick="addPin('2')">2</button>
-                        <button class="pin-btn" onclick="addPin('3')">3</button>
-                        <button class="pin-btn" onclick="addPin('4')">4</button>
-                        <button class="pin-btn" onclick="addPin('5')">5</button>
-                        <button class="pin-btn" onclick="addPin('6')">6</button>
-                        <button class="pin-btn" onclick="addPin('7')">7</button>
-                        <button class="pin-btn" onclick="addPin('8')">8</button>
-                        <button class="pin-btn" onclick="addPin('9')">9</button>
-                        <button class="pin-btn" onclick="clearPin()" style="border-color: #f56565; color: #f56565;">C</button>
-                        <button class="pin-btn" onclick="addPin('0')">0</button>
-                        <button class="pin-btn" onclick="submitPin()" style="border-color: #48bb78; color: #48bb78;">OK</button>
-                    </div>
-                    <button onclick="hidePinPad()" style="margin-top: 30px; font-size: 14px; padding: 8px 15px;">Abbrechen</button>
-                </div>
             </div>
+
 
             
             <div style="text-align: center; margin-top: 15px;">
@@ -938,90 +899,18 @@ def index():
         </div>
 
         <script>
-            let currentPin = "";
-            let currentUserId = null;
-            let isPinVisible = false;
-
-            function addPin(num) {
-                if (currentPin.length < 4) {
-                    currentPin += num;
-                    updatePinDisplay();
-                }
-            }
-
-            function clearPin() {
-                currentPin = "";
-                updatePinDisplay();
-            }
-
-            function updatePinDisplay() {
-                document.getElementById('pinDisplay').innerText = "*".repeat(currentPin.length);
-            }
-
-            async function submitPin() {
-                if (currentPin.length < 4) return;
-                
-                const pinDisplay = document.getElementById('pinDisplay');
-                pinDisplay.innerText = "⏳";
-                
-                try {
-                    const response = await fetch('/api/verify_pin', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ person_id: currentUserId, pin: currentPin })
-                    });
-                    const result = await response.json();
-                    
-                    if (result.success) {
-                        pinDisplay.innerText = "✅";
-                        document.getElementById('pinUserMsg').innerText = "Zugriff gewährt!";
-                        setTimeout(() => location.reload(), 2000);
-                    } else {
-                        pinDisplay.innerText = "❌";
-                        document.getElementById('pinUserMsg').innerText = "Falscher PIN!";
-                        setTimeout(() => {
-                            clearPin();
-                            document.getElementById('pinUserMsg').innerText = "Bitte PIN eingeben:";
-                        }, 2000);
-                    }
-                } catch (e) {
-                    alert("Verbindungsfehler");
-                }
-            }
-
-            function hidePinPad() {
-                isPinVisible = false;
-                document.getElementById('pinOverlay').style.display = 'none';
-                currentPin = "";
-                updatePinDisplay();
-            }
-
-            function showPinPad(name, id) {
-                if (isPinVisible && currentUserId === id) return;
-                isPinVisible = true;
-                currentUserId = id;
-                document.getElementById('pinUserMsg').innerText = "Hallo " + name;
-                document.getElementById('pinOverlay').style.display = 'flex';
-                clearPin();
-            }
-
-            // Polling für Detection
-            async function checkStatus() {
-                if (isPinVisible) return; // Nicht pollen wenn Pad offen
-                
+            // Nur einfache Polling-Stats, kein PIN Pad mehr hier
+            async function updateStats() {
                 try {
                     const response = await fetch('/api/current_status');
                     const data = await response.json();
-                    
-                    if (data.detected) {
-                        showPinPad(data.name, data.id);
-                    }
+                    // Dashboard stats etc.
                 } catch (e) {}
             }
-
-            setInterval(checkStatus, 1000);
+            setInterval(updateStats, 5000);
         </script>
     </body>
+
 
     </html>
     """
