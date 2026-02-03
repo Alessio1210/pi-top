@@ -393,12 +393,6 @@ def generate_frames():
     """
     Generator für Video-Streaming mit Face Recognition
     """
-    global camera
-    
-    if camera is None:
-        yield b'--frame\r\nContent-Type: text/plain\r\n\r\nKeine Kamera verfuegbar\r\n'
-        return
-    
     # Generator für Video-Streaming (Hochoptimiert für FPS)
     global camera, current_frame, ai_frame_buffer
     
