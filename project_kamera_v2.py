@@ -11,6 +11,7 @@ import numpy as np
 import threading
 import sys
 import os
+import time
 import json
 import base64
 from datetime import datetime, timedelta
@@ -58,6 +59,13 @@ known_face_encodings = []
 known_face_names = []
 known_face_ids = []
 last_detection_time = {}  # Verhindert Spam in DB
+
+# Async AI Variablen
+ai_frame_buffer = None
+ai_frame_lock = threading.Lock()
+ai_results = [] # [(top, right, bottom, left), (name, label)]
+ai_results_lock = threading.Lock()
+is_running = True
 
 # Detection Settings
 DETECTION_CONFIDENCE_THRESHOLD = float(os.getenv('DETECTION_CONFIDENCE_THRESHOLD', 0.6))
@@ -220,6 +228,102 @@ def trigger_alert(frame):
         t = threading.Thread(target=send_telegram_alert_thread, args=(buffer.tobytes(),))
         t.start()
 
+def ai_worker_thread():
+    """
+    Hintergrund-Thread für Face Recognition
+    """
+    global ai_frame_buffer, ai_results, unknown_face_counter
+    
+    print("🤖 AI Worker gestartet...")
+    
+    while is_running:
+        # Hole neuesten Frame
+        frame_to_process = None
+        with ai_frame_lock:
+            if ai_frame_buffer is not None:
+                frame_to_process = ai_frame_buffer.copy()
+        
+        if frame_to_process is None:
+            time.sleep(0.01)
+            continue
+
+        try:
+            # Resize für schnellere Verarbeitung (0.5 für mehr Genauigkeit)
+            scale_factor = 0.5
+            inverse_scale = int(1/scale_factor)
+            
+            small_frame = cv2.resize(frame_to_process, (0, 0), fx=scale_factor, fy=scale_factor)
+            rgb_small_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
+            
+            # Finde Gesichter
+            # Hier brauchen wir keinen Lock mehr, da wir im eigenen Thread sind
+            current_locations = face_recognition.face_locations(rgb_small_frame)
+            current_encodings = face_recognition.face_encodings(rgb_small_frame, current_locations)
+            
+            new_results = []
+            current_face_names_for_alert = []
+            
+            for face_encoding, location in zip(current_encodings, current_locations):
+                # Vergleiche mit bekannten Gesichtern
+                name = "Unbekannt"
+                confidence = 0.0
+                person_id = None
+                label_text = "Unbekannt"
+                
+                if len(known_face_encodings) > 0:
+                    # Berechne Distanzen
+                    face_distances = face_recognition.face_distance(known_face_encodings, face_encoding)
+                    best_match_index = np.argmin(face_distances)
+                    
+                    # Confidence = 1 - distance
+                    confidence = 1 - face_distances[best_match_index]
+                    
+                    if confidence > DETECTION_CONFIDENCE_THRESHOLD:
+                        name = known_face_names[best_match_index]
+                        person_id = known_face_ids[best_match_index]
+                        label_text = f"{name} ({confidence:.0%})"
+                        
+                        # Speichere Detection in DB
+                        save_detection(person_id, name, confidence)
+                
+                # Skaliere Koordinaten zurück
+                top, right, bottom, left = location
+                top *= inverse_scale
+                right *= inverse_scale
+                bottom *= inverse_scale
+                left *= inverse_scale
+                
+                new_results.append(((top, right, bottom, left), (name, label_text)))
+                current_face_names_for_alert.append(name)
+            
+            # Ergebnisse update
+            with ai_results_lock:
+                ai_results = new_results
+                
+            # === Alarm Logik ===
+            has_known = any(n != "Unbekannt" for n in current_face_names_for_alert)
+            has_unknown = any(n == "Unbekannt" for n in current_face_names_for_alert)
+            
+            if has_known:
+                unknown_face_counter = 0
+            elif has_unknown:
+                unknown_face_counter += 1
+                if unknown_face_counter >= UNKNOWN_THRESHOLD:
+                    trigger_alert(frame_to_process)
+                    unknown_face_counter = 0
+            else:
+                 # Kein Gesicht -> Zähler langsam abbauen oder resetten?
+                 # Resetten ist sicherer
+                 if unknown_face_counter > 0:
+                     unknown_face_counter -= 1
+
+        except Exception as e:
+            print(f"⚠️ AI Thread Fehler: {e}")
+            
+        # Kurze Pause um CPU zu schonen
+        time.sleep(0.01)
+
+
 def find_camera():
     """
     Sucht automatisch nach verfügbaren Kameras
@@ -272,7 +376,7 @@ def initialize_camera():
     print("\n⚙️  Konfiguriere Kamera-Einstellungen...")
     camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-    camera.set(cv2.CAP_PROP_FPS, 30)
+    camera.set(cv2.CAP_PROP_FPS, 60) # Versuch auf 60 FPS zu setzen
     camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     
     camera_info['width'] = int(camera.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -295,12 +399,12 @@ def generate_frames():
         yield b'--frame\r\nContent-Type: text/plain\r\n\r\nKeine Kamera verfuegbar\r\n'
         return
     
-    # Process every Nth frame for face recognition (performance)
-    process_this_frame = 0
+    # Generator für Video-Streaming (Hochoptimiert für FPS)
+    global camera, current_frame, ai_frame_buffer
     
-    # Persistente Variablen für Face Tracking (gegen Flickern)
-    face_locations = []
-    face_names = []
+    if camera is None:
+        yield b'--frame\r\nContent-Type: text/plain\r\n\r\nKeine Kamera verfuegbar\r\n'
+        return
     
     while True:
         with camera_lock:
@@ -310,138 +414,46 @@ def generate_frames():
                 print("⚠️ Fehler beim Lesen des Kamera-Frames")
                 break
             
-            # Speichere aktuellen Frame für Snapshots
-            global current_frame
-            current_frame = frame.copy()
+            # 1. Update Globals (für Enrollment & AI)
+            current_frame = frame  # Referenz (schnell)
             
-            # Face Recognition (nur jeden 3. Frame)
-            if face_recognition_enabled and process_this_frame % 3 == 0:
-                # Resize für schnellere Verarbeitung (0.5 für mehr Genauigkeit, 0.25 für Speed)
-                # Wir erhöhen auf 0.5 für bessere Erkennung
-                scale_factor = 0.5
-                inverse_scale = int(1/scale_factor)
-                
-                small_frame = cv2.resize(frame, (0, 0), fx=scale_factor, fy=scale_factor)
-                rgb_small_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
-                
-                # Finde Gesichter
-                with processing_lock:
-                    current_locations = face_recognition.face_locations(rgb_small_frame)
-                    current_encodings = face_recognition.face_encodings(rgb_small_frame, current_locations)
-                
-                face_locations = []
-                face_names_temp = []
-                
-                for face_encoding, location in zip(current_encodings, current_locations):
-                    # Vergleiche mit bekannten Gesichtern
-                    name = "Unbekannt"
-                    confidence = 0.0
-                    person_id = None
-                    label_text = "Unbekannt"
-                    
-                    if len(known_face_encodings) > 0:
-                        # Berechne Distanzen
-                        face_distances = face_recognition.face_distance(known_face_encodings, face_encoding)
-                        best_match_index = np.argmin(face_distances)
-                        
-                        # Confidence = 1 - distance
-                        confidence = 1 - face_distances[best_match_index]
-                        
-                        if confidence > DETECTION_CONFIDENCE_THRESHOLD:
-                            name = known_face_names[best_match_index]
-                            person_id = known_face_ids[best_match_index]
-                            label_text = f"{name} ({confidence:.0%})"
-                            
-                            # Speichere Detection in DB
-                            save_detection(person_id, name, confidence)
-                    
-                    face_names_temp.append((name, label_text))
-                    
-                    # Skaliere Koordinaten zurück für Anzeige
-                    top, right, bottom, left = location
-                    top *= inverse_scale
-                    right *= inverse_scale
-                    bottom *= inverse_scale
-                    left *= inverse_scale
-                    face_locations.append((top, right, bottom, left))
-                
-                face_names = face_names_temp
-                
-                # === Alarm Logik (nur einmal pro Detection-Cycle prüfen) ===
-                global unknown_face_counter
-                
-                # Prüfe ob NUR unbekannte Personen im Bild sind
-                has_known_person = any(name != "Unbekannt" for name, _ in face_names)
-                has_unknown_person = any(name == "Unbekannt" for name, _ in face_names)
-                
-                if has_known_person:
-                    unknown_face_counter = 0
-                elif has_unknown_person:
-                    # Nur erhöhen wenn wir wirklich jemanden sehen, aber niemanden kennen
-                    unknown_face_counter += 1
-                    if unknown_face_counter >= UNKNOWN_THRESHOLD:
-                        trigger_alert(current_frame)
-                        unknown_face_counter = 0
-
-            # Zeichne Boxen (in JEDEM Frame)
-            for (top, right, bottom, left), (name, label_text) in zip(face_locations, face_names):
-                # Zeichne Box
+            # Sende an AI Thread (nur Copy wenn nötig, hier Referenz ok da AI copy macht)
+            with ai_frame_lock:
+                ai_frame_buffer = frame
+            
+            # 2. Hole letzte AI Ergebnisse (ohne zu warten!)
+            current_results = []
+            with ai_results_lock:
+                current_results = ai_results # Copy reference
+            
+            # 3. Zeichne Ergebnisse
+            for (top, right, bottom, left), (name, label_text) in current_results:
                 color = (0, 255, 0) if name != "Unbekannt" else (0, 0, 255)
                 thickness = 3
                 
-                # Rechteck
+                # Box Design
                 cv2.rectangle(frame, (left, top), (right, bottom), color, thickness)
-                
-                # Ecken für modernen Look
-                corner_length = 20
-                corner_thickness = 4
-                
-                # Oben links
-                cv2.line(frame, (left, top), (left + corner_length, top), color, corner_thickness)
-                cv2.line(frame, (left, top), (left, top + corner_length), color, corner_thickness)
-                
-                # Oben rechts
-                cv2.line(frame, (right, top), (right - corner_length, top), color, corner_thickness)
-                cv2.line(frame, (right, top), (right, top + corner_length), color, corner_thickness)
-                
-                # Unten links
-                cv2.line(frame, (left, bottom), (left + corner_length, bottom), color, corner_thickness)
-                cv2.line(frame, (left, bottom), (left, bottom - corner_length), color, corner_thickness)
-                
-                # Unten rechts
-                cv2.line(frame, (right, bottom), (right - corner_length, bottom), color, corner_thickness)
-                cv2.line(frame, (right, bottom), (right, bottom - corner_length), color, corner_thickness)
-                
-                font = cv2.FONT_HERSHEY_SIMPLEX
-                font_scale = 0.7
-                font_thickness = 2
-                
-                # Textgröße
-                (text_width, text_height), baseline = cv2.getTextSize(
-                    label_text, font, font_scale, font_thickness
-                )
-                
-                # Hintergrund für Text
-                cv2.rectangle(
-                    frame,
-                    (left, top - text_height - 10),
-                    (left + text_width + 10, top),
-                    color,
-                    -1
-                )
+                corner_len = 20
+                cv2.line(frame, (left, top), (left + corner_len, top), color, 4)
+                cv2.line(frame, (left, top), (left, top + corner_len), color, 4)
+                cv2.line(frame, (right, top), (right - corner_len, top), color, 4)
+                cv2.line(frame, (right, top), (right, top + corner_len), color, 4)
+                cv2.line(frame, (left, bottom), (left + corner_len, bottom), color, 4)
+                cv2.line(frame, (left, bottom), (left, bottom - corner_len), color, 4)
+                cv2.line(frame, (right, bottom), (right - corner_len, bottom), color, 4)
+                cv2.line(frame, (right, bottom), (right, bottom - corner_len), color, 4)
                 
                 # Text
-                cv2.putText(
-                    frame,
-                    label_text,
-                    (left + 5, top - 5),
-                    font,
-                    font_scale,
-                    (255, 255, 255),  # Weiß
-                    font_thickness
-                )
+                (tw, th), _ = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
+                cv2.rectangle(frame, (left, top - th - 10), (left + tw + 10, top), color, -1)
+                cv2.putText(frame, label_text, (left + 5, top - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2)
             
-            process_this_frame += 1
+            # 4. Kodieren & Senden (High Speed)
+            ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 75]) # 75% Quality für Speed
+            
+            if ret:
+                yield (b'--frame\r\n'
+                       b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
             
             # Frame in JPEG konvertieren
             ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
@@ -1047,6 +1059,10 @@ def main():
     
     # Cleanup alte Detections
     cleanup_old_detections()
+    
+    # 🚀 Starte AI Worker Thread
+    ai_connector = threading.Thread(target=ai_worker_thread, daemon=True)
+    ai_connector.start()
     
     print("\n🌐 Server-URLs:")
     print(f"   Lokal:        http://localhost:{SERVER_PORT}")
