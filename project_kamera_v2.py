@@ -34,12 +34,48 @@ SUPABASE_URL = os.getenv('SUPABASE_URL')
 SUPABASE_KEY = os.getenv('SUPABASE_KEY')
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Telegram Bot Konfiguration
+# Telegram & Discord Konfiguration
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
+DISCORD_WEBHOOK_URL = os.getenv('DISCORD_WEBHOOK_URL')
+
 telegram_alert_cooldown = datetime.min
 unknown_face_counter = 0
 UNKNOWN_THRESHOLD = 15  # Ca. 2-3 Sekunden durchgehend unbekannt vor Alarm
+
+# Hardware Konfiguration
+BUZZER_PIN = 6  # A2 auf Foundation Plate ist GPIO 6
+# Wir nutzen gpiozero für einfache Ansteuerung
+try:
+    from gpiozero import Buzzer
+    buzzer = Buzzer(BUZZER_PIN)
+    print("🔊 Buzzer initialisiert auf GPIO 6 (A2)")
+except Exception as e:
+    buzzer = None
+    print(f"⚠️ Buzzer Fehler: {e}")
+
+# I2C LCD Setup (Standard Grove LCD 16x2)
+class LCD16x2:
+    def __init__(self, address=0x3e): # 0x3e is typical for Grove RGB LCD
+        try:
+            from smbus2 import SMBus
+            self.bus = SMBus(1)
+            self.address = address
+            print(f"📟 LCD initialisiert auf I2C 0x{address:02x}")
+        except:
+            self.bus = None
+            print("⚠️ LCD (smbus2) nicht verfügbar")
+
+    def write_message(self, line1, line2=""):
+        if not self.bus: return
+        print(f"📟 LCD: [{line1}] / [{line2}]")
+        # Hier käme die I2C Protokoll Logik für das Display
+        # Da es viele verschiedene LCDs gibt, halten wir es als Mock/Log
+        # In einer echten Umgebung müssten hier die Register-Writes stehen.
+
+lcd_display = LCD16x2()
+
+
 
 # Globale Variablen
 # Globale Variablen
@@ -72,6 +108,14 @@ is_running = True
 # Detection Settings
 DETECTION_CONFIDENCE_THRESHOLD = float(os.getenv('DETECTION_CONFIDENCE_THRESHOLD', 0.6))
 DETECTION_COOLDOWN_SECONDS = 5  # Nur alle 5 Sekunden in DB speichern
+
+# Status Tracking für UI
+last_detected_person = {
+    "id": None,
+    "name": None,
+    "timestamp": 0
+}
+
 
 # Statistiken
 stats = {
@@ -210,13 +254,37 @@ def send_telegram_alert_thread(image_bytes):
     except Exception as e:
         print(f"   ❌ Konnte Telegram nicht erreichen: {e}")
 
+def send_discord_alert(message, image_bytes=None):
+    """
+    Sendet eine Nachricht an Discord via Webhook
+    """
+    if not DISCORD_WEBHOOK_URL:
+        return
+        
+    try:
+        data = {
+            "content": message,
+            "username": "Pi-Top Security"
+        }
+        
+        files = {}
+        if image_bytes:
+            files = {
+                "file": ("alert.jpg", image_bytes)
+            }
+            
+        requests.post(DISCORD_WEBHOOK_URL, data=data, files=files, timeout=5)
+        print("   ✅ Discord Alert gesendet")
+    except Exception as e:
+        print(f"   ❌ Discord Fehler: {e}")
+
 def trigger_alert(frame):
     """
-    Startet den Alarm-Prozess
+    Startet den Alarm-Prozess (Telegram + Discord)
     """
     global telegram_alert_cooldown
     
-    # Cooldown Check (z.B. nur alle 60 Sekunden Alarm)
+    # Cooldown Check
     if datetime.now() < telegram_alert_cooldown:
         return
 
@@ -226,9 +294,21 @@ def trigger_alert(frame):
         print("\n🚨 UNBEKANNTE PERSON - Sende Alarm...")
         telegram_alert_cooldown = datetime.now() + timedelta(seconds=60)
         
-        # In separatem Thread senden (damit Video nicht stockt)
-        t = threading.Thread(target=send_telegram_alert_thread, args=(buffer.tobytes(),))
-        t.start()
+        img_bytes = buffer.tobytes()
+        
+        # Telegram Thread
+        t1 = threading.Thread(target=send_telegram_alert_thread, args=(img_bytes,))
+        t1.start()
+        
+        # Discord Thread
+        t2 = threading.Thread(target=send_discord_alert, args=("🚨 **ALARM**: Unbekannte Person erkannt!", img_bytes))
+        t2.start()
+        
+        # Hardware Feedback
+        if buzzer:
+            # Alarm Sound (3x kurz)
+            threading.Thread(target=lambda: [buzzer.beep(on_time=0.1, off_time=0.1, n=3)], daemon=True).start()
+
 
 def ai_worker_thread():
     """
@@ -301,6 +381,17 @@ def ai_worker_thread():
             # Ergebnisse update
             with ai_results_lock:
                 ai_results = new_results
+                
+                # Update UI Status (nur wenn ein Match da war)
+                if current_face_names_for_alert:
+                    # Nimm das erste Gesicht für den PIN Pad (einfachste Logik)
+                    for (loc, info) in new_results:
+                        if info[0] != "Unbekannt":
+                            last_detected_person["id"] = known_face_ids[known_face_names.index(info[0])]
+                            last_detected_person["name"] = info[0]
+                            last_detected_person["timestamp"] = time.time()
+                            break
+
                 
             # === Alarm Logik ===
             has_known = any(n != "Unbekannt" for n in current_face_names_for_alert)
@@ -602,7 +693,47 @@ def index():
                 font-weight: bold;
                 margin-top: 5px;
             }
+
+            /* PIN PAD OVERLAY */
+            #pinOverlay {
+                display: none;
+                position: absolute;
+                top: 0; left: 0; width: 100%; height: 100%;
+                background: rgba(0,0,0,0.85);
+                color: white;
+                flex-direction: column;
+                justify-content: center;
+                align-items: center;
+                z-index: 100;
+                backdrop-filter: blur(5px);
+            }
+            .pin-grid {
+                display: grid;
+                grid-template-columns: repeat(3, 70px);
+                gap: 15px;
+                margin-top: 20px;
+            }
+            .pin-btn {
+                width: 70px; height: 70px;
+                border-radius: 50%;
+                border: 2px solid white;
+                background: none;
+                color: white;
+                font-size: 24px;
+                cursor: pointer;
+                transition: all 0.2s;
+            }
+            .pin-btn:hover { background: rgba(255,255,255,0.2); }
+            .pin-btn:active { transform: scale(0.9); }
+            .pin-display {
+                font-size: 32px;
+                letter-spacing: 15px;
+                margin: 20px 0;
+                height: 40px;
+            }
+            .pin-msg { font-size: 18px; margin-bottom: 10px; text-align: center; }
         </style>
+
     </head>
     <body>
         <h1>🎯 Pi-Top Face Recognition</h1>
@@ -610,7 +741,30 @@ def index():
         <div class="container">
             <div class="video-container">
                 <img id="videoStream" src="{{ url_for('video_feed') }}" alt="Kamera Stream">
+                
+                <!-- PIN PAD OVERLAY -->
+                <div id="pinOverlay">
+                    <div class="pin-msg" id="pinUserMsg">Hallo Alessio</div>
+                    <div class="pin-msg">Bitte PIN eingeben:</div>
+                    <div class="pin-display" id="pinDisplay">****</div>
+                    <div class="pin-grid">
+                        <button class="pin-btn" onclick="addPin('1')">1</button>
+                        <button class="pin-btn" onclick="addPin('2')">2</button>
+                        <button class="pin-btn" onclick="addPin('3')">3</button>
+                        <button class="pin-btn" onclick="addPin('4')">4</button>
+                        <button class="pin-btn" onclick="addPin('5')">5</button>
+                        <button class="pin-btn" onclick="addPin('6')">6</button>
+                        <button class="pin-btn" onclick="addPin('7')">7</button>
+                        <button class="pin-btn" onclick="addPin('8')">8</button>
+                        <button class="pin-btn" onclick="addPin('9')">9</button>
+                        <button class="pin-btn" onclick="clearPin()" style="border-color: #f56565; color: #f56565;">C</button>
+                        <button class="pin-btn" onclick="addPin('0')">0</button>
+                        <button class="pin-btn" onclick="submitPin()" style="border-color: #48bb78; color: #48bb78;">OK</button>
+                    </div>
+                    <button onclick="hidePinPad()" style="margin-top: 30px; font-size: 14px; padding: 8px 15px;">Abbrechen</button>
+                </div>
             </div>
+
             
             <div style="text-align: center; margin-top: 15px;">
                 {% if camera_status %}
@@ -645,7 +799,93 @@ def index():
                 <button onclick="location.reload()">🔄 Neu laden</button>
             </div>
         </div>
+
+        <script>
+            let currentPin = "";
+            let currentUserId = null;
+            let isPinVisible = false;
+
+            function addPin(num) {
+                if (currentPin.length < 4) {
+                    currentPin += num;
+                    updatePinDisplay();
+                }
+            }
+
+            function clearPin() {
+                currentPin = "";
+                updatePinDisplay();
+            }
+
+            function updatePinDisplay() {
+                document.getElementById('pinDisplay').innerText = "*".repeat(currentPin.length);
+            }
+
+            async function submitPin() {
+                if (currentPin.length < 4) return;
+                
+                const pinDisplay = document.getElementById('pinDisplay');
+                pinDisplay.innerText = "⏳";
+                
+                try {
+                    const response = await fetch('/api/verify_pin', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ person_id: currentUserId, pin: currentPin })
+                    });
+                    const result = await response.json();
+                    
+                    if (result.success) {
+                        pinDisplay.innerText = "✅";
+                        document.getElementById('pinUserMsg').innerText = "Zugriff gewährt!";
+                        setTimeout(() => location.reload(), 2000);
+                    } else {
+                        pinDisplay.innerText = "❌";
+                        document.getElementById('pinUserMsg').innerText = "Falscher PIN!";
+                        setTimeout(() => {
+                            clearPin();
+                            document.getElementById('pinUserMsg').innerText = "Bitte PIN eingeben:";
+                        }, 2000);
+                    }
+                } catch (e) {
+                    alert("Verbindungsfehler");
+                }
+            }
+
+            function hidePinPad() {
+                isPinVisible = false;
+                document.getElementById('pinOverlay').style.display = 'none';
+                currentPin = "";
+                updatePinDisplay();
+            }
+
+            function showPinPad(name, id) {
+                if (isPinVisible && currentUserId === id) return;
+                isPinVisible = true;
+                currentUserId = id;
+                document.getElementById('pinUserMsg').innerText = "Hallo " + name;
+                document.getElementById('pinOverlay').style.display = 'flex';
+                clearPin();
+            }
+
+            // Polling für Detection
+            async function checkStatus() {
+                if (isPinVisible) return; // Nicht pollen wenn Pad offen
+                
+                try {
+                    const response = await fetch('/api/current_status');
+                    const data = await response.json();
+                    
+                    if (data.detected) {
+                        showPinPad(data.name, data.id);
+                    }
+                } catch (e) {}
+            }
+
+            setInterval(checkStatus, 1000);
+        </script>
     </body>
+
     </html>
     """
     
@@ -796,6 +1036,13 @@ def enroll_page():
                         <label>Notizen</label>
                         <textarea id="notes" rows="3" placeholder="Abteilung, Position, etc."></textarea>
                     </div>
+
+                    <div class="form-group">
+                        <label>Sicherheits-PIN (4-stellig) *</label>
+                        <input type="password" id="pin" placeholder="1234" maxlength="4" pattern="\[0-9]{4}">
+                        <small style="color: #666;">Dieser PIN wird für den Login benötigt.</small>
+                    </div>
+
                     
                     <button onclick="savePerson()" class="btn btn-save" id="saveBtn" disabled>💾 Speichern</button>
                     <a href="/" class="btn btn-back">Zurück zur Übersicht</a>
@@ -846,8 +1093,15 @@ def enroll_page():
                 const employeeId = document.getElementById('employee_id').value;
                 const notes = document.getElementById('notes').value;
                 
-                if (!name) {
-                    showMessage('Bitte einen Namen eingeben', 'error');
+                const pin = document.getElementById('pin').value;
+                
+                if (!name || !pin) {
+                    showMessage('Bitte Name und PIN eingeben', 'error');
+                    return;
+                }
+                
+                if (pin.length < 4) {
+                    showMessage('Der PIN muss 4 Ziffern lang sein', 'error');
                     return;
                 }
                 
@@ -861,7 +1115,8 @@ def enroll_page():
                         capture_id: capturedData.capture_id,
                         name: name,
                         employee_number: employeeId,
-                        notes: notes
+                        notes: notes,
+                        pin: pin
                     };
                     
                     const response = await fetch('/api/register_person', {
@@ -962,6 +1217,83 @@ def capture_face_api():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
+@app.route('/api/current_status')
+def current_status_api():
+    """
+    Gibt den aktuell erkannten User zurück (für das PIN Pad am Mac)
+    """
+    now = time.time()
+    # Wenn die Erkennung älter als 2 Sekunden ist, gilt sie als "weg"
+    if now - last_detected_person["timestamp"] > 2:
+        return jsonify({'detected': False})
+        
+    return jsonify({
+        'detected': True,
+        'id': last_detected_person["id"],
+        'name': last_detected_person["name"]
+    })
+
+
+@app.route('/api/verify_pin', methods=['POST'])
+def verify_pin_api():
+    """
+    Überprüft den eingegebenen PIN für eine Person
+    """
+    data = request.json
+    person_id = data.get('person_id')
+    pin_input = str(data.get('pin'))
+    
+    if not person_id or not pin_input:
+        return jsonify({'success': False, 'error': 'Fehlende Daten'})
+        
+    try:
+        # Hole richtigen PIN aus DB
+        response = supabase.table('persons').select('pin, name, employee_number').eq('id', person_id).execute()
+        
+        if not response.data:
+            return jsonify({'success': False, 'error': 'Person nicht gefunden'})
+            
+        user = response.data[0]
+        correct_pin = str(user.get('pin'))
+        username = user.get('name')
+        emp_num = user.get('employee_number', '---')
+        
+        if correct_pin == pin_input:
+            # ✅ Richtig
+            print(f"✅ PIN korrekt für {username}")
+            
+            # Hardware Feedback: Success (Kurzer Piep)
+            if buzzer:
+                threading.Thread(target=lambda: [buzzer.on(), time.sleep(0.2), buzzer.off()], daemon=True).start()
+                
+            # LCD Update
+            if lcd_display:
+                lcd_display.write_message(f"Hallo {username}", f"ID: {emp_num}")
+            
+            return jsonify({'success': True, 'name': username})
+        else:
+            # ❌ Falsch
+            print(f"❌ PIN falsch für {username}")
+            
+            # LCD Update Error
+            if lcd_display:
+                lcd_display.write_message("FEHLER", "Falscher PIN")
+            
+            # Hardware Feedback: Error (Langer tiefer Piep oder mehrmals)
+
+            if buzzer:
+                threading.Thread(target=lambda: [buzzer.on(), time.sleep(0.6), buzzer.off()], daemon=True).start()
+            
+            # Discord Alert bei falschem PIN
+            failed_msg = f"⚠️ **Fehlgeschlagener Login**: Falscher PIN eingegeben für **{username}**!"
+            threading.Thread(target=send_discord_alert, args=(failed_msg,)).start()
+            
+            return jsonify({'success': False, 'error': 'Falscher PIN'})
+            
+    except Exception as e:
+        print(f"❌ Fehler bei PIN Check: {e}")
+        return jsonify({'success': False, 'error': str(e)})
+
 @app.route('/api/register_person', methods=['POST'])
 def register_person_api():
     """
@@ -974,6 +1306,7 @@ def register_person_api():
     name = data.get('name')
     employee_number = data.get('employee_number')
     notes = data.get('notes')
+    pin = data.get('pin', '0000') # Default PIN
     
     if not capture_id or capture_id not in enrollment_cache:
         return jsonify({'success': False, 'error': 'Capture ID ungültig oder abgelaufen'})
@@ -988,8 +1321,10 @@ def register_person_api():
         person_data = {
             'name': name,
             'face_encoding': encoding_data['encoding'],
-            'notes': notes
+            'notes': notes,
+            'pin': str(pin)
         }
+
         
         if employee_number:
             # Versuche employee_number zu speichern
