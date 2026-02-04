@@ -70,10 +70,14 @@ class HardwareManager:
         
         # Aktive Adressen & Typen
         self.lcd_address = None
-        self.lcd_type = "GROVE" # oder "GENERIC"
+        self.lcd_type = "GROVE" 
         self.rgb_address = None
         self.keypad_address = None
         self.fingerprint_address = None
+        
+        # State Tracking (verhindert Spam im Terminal)
+        self.last_line1 = ""
+        self.last_line2 = ""
 
         try:
             from smbus2 import SMBus
@@ -191,13 +195,15 @@ class HardwareManager:
         print("   ✅ Fingerprint Sensor initialisiert")
 
     def write_lcd(self, line1, line2=""):
-        # Konsole-Überwachung (WICHTIG für dich am Mac)
-        # Wir nutzen flush=True, damit du es sofort siehst
-        print(f"\n✨ LCD-DISPLAY-SIMULATION ✨", flush=True)
-        print(f"┌──────────────────┐", flush=True)
-        print(f"│ {line1:16} │", flush=True)
-        print(f"│ {line2:16} │", flush=True)
-        print(f"└──────────────────┘\n", flush=True)
+        # Nur schreiben, wenn sich der Text wirklich geändert hat
+        if line1 == self.last_line1 and line2 == self.last_line2:
+            return
+            
+        self.last_line1 = line1
+        self.last_line2 = line2
+
+        # Konsole-Ausgabe (Nur bei Änderung)
+        print(f"\n📟 [LCD] {line1:10} | {line2:10}", flush=True)
         
         if not self.bus or not self.lcd_address: return
         try:
@@ -685,7 +691,6 @@ def ai_worker_thread():
             
             if has_known:
                 unknown_face_counter = 0
-                # LCD Update bei bekanntem Gesicht
                 known_names = [n for n in current_face_names_for_alert if n != "Unbekannt"]
                 if known_names:
                     hw.write_lcd("Hallo!", known_names[0])
@@ -696,9 +701,11 @@ def ai_worker_thread():
                     trigger_alert(frame_to_process)
                     unknown_face_counter = 0
             else:
-                 # Kein Gesicht -> Reset auf Standby
+                 # Kein Gesicht -> Kurze Verzögerung bevor "Bereit" kommt (Smoothing)
                  if unknown_face_counter > 0:
                      unknown_face_counter -= 1
+                 
+                 # Nur wenn seit 10 Frames (ca 1 Sek) nichts gesehen wurde, auf Bereit zurück
                  if unknown_face_counter == 0:
                      hw.write_lcd("Hallo!", "Bereit...")
 
