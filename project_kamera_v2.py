@@ -20,6 +20,7 @@ from PIL import Image
 import uuid
 
 import requests
+import serial
 from supabase import create_client, Client
 from dotenv import load_dotenv
 
@@ -27,7 +28,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 app = Flask(__name__)
-SERVER_PORT = 8000  # Port Konfiguration (Standard HTTP Alternativ-Port)
+# Flask-Logging deaktivieren (gegen das Chaos im Terminal)
+import logging
+log = logging.getLogger('werkzeug')
+log.setLevel(logging.ERROR)
+
+SERVER_PORT = 8000
 
 # Supabase Client
 SUPABASE_URL = os.getenv('SUPABASE_URL')
@@ -54,7 +60,11 @@ except Exception as e:
     buzzer = None
     print(f"⚠️ Buzzer Fehler: {e}")
 
-# I2C Treiber für Hardware-Komponenten (LCD, Keypad, Fingerprint)
+# Hilfsfunktion für saubere Terminal-Ausgabe
+def cprint(msg):
+    print(f"\r{msg}", flush=True)
+
+# hardware_pin_buffer etc.
 # I2C Treiber für Hardware-Komponenten (LCD, Keypad, Fingerprint)
 class HardwareManager:
     def __init__(self):
@@ -82,8 +92,17 @@ class HardwareManager:
         try:
             from smbus2 import SMBus
             self.bus = SMBus(1)
-            print("📡 I2C Bus 1 geöffnet...")
+            cprint("📡 I2C Bus 1 geöffnet...")
             self.scan_i2c_bus()
+            
+            # Neue UART-Initialisierung für das ATtiny1616 Keypad
+            try:
+                self.ser = serial.Serial("/dev/serial0", 9600, timeout=0.05)
+                cprint("📟 UART Port (/dev/serial0) für Keypad geöffnet.")
+            except Exception as e:
+                self.ser = None
+                cprint(f"⚠️ UART Fehler (Keypad nicht über Serial erreichbar): {e}")
+
             self.assign_and_init()
         except Exception as e:
             self.bus = None
@@ -231,12 +250,26 @@ class HardwareManager:
         except: pass
 
     def read_keypad(self):
-        if not self.bus or not self.keypad_address: return 0
+        """
+        Liest das UART-Keypad (ATtiny1616 Protocol)
+        """
+        if not self.ser: return None
         try:
-            lsb = self.bus.read_byte_data(self.keypad_address, 0x00)
-            msb = self.bus.read_byte_data(self.keypad_address, 0x01)
-            return (msb << 8) | lsb
-        except: return 0
+            if self.ser.in_waiting > 0:
+                data = self.ser.read(1)[0]
+                # Mapping laut Seeed Studio Wiki
+                mapping = {
+                    0xE1: "1", 0xE2: "2", 0xE3: "3",
+                    0xE4: "4", 0xE5: "5", 0xE6: "6",
+                    0xE7: "7", 0xE8: "8", 0xE9: "9",
+                    0xEB: "0", 0xEA: "*", 0xEC: "#"
+                }
+                key = mapping.get(data)
+                if key:
+                    cprint(f"🎯 UART Key erkannt: {key}")
+                return key
+        except: pass
+        return None
 
     def read_fingerprint(self):
         if not self.bus or not self.fingerprint_address: return None
@@ -251,59 +284,53 @@ last_key_state = 0
 
 def physical_hardware_loop():
     """
-    Thread der das physikalische Keypad (MPR121) überwacht
+    Thread der das physikalische Keypad (UART) überwacht
     """
-    global hardware_pin_buffer, last_key_state
+    global hardware_pin_buffer
     
-    key_map = {
-        1: "1", 2: "2", 4: "3", 
-        8: "4", 16: "5", 32: "6", 
-        64: "7", 128: "8", 256: "9", 
-        1024: "0", 512: "*", 2048: "#"
-    }
-
     while is_running:
-        # 1. Physikalische Abfrage (nur wenn Bus da ist)
-        raw_state = hw.read_keypad()
-        if raw_state != 0 and last_key_state == 0:
-            key = key_map.get(raw_state)
-            if key: process_key_input(key)
-        last_key_state = raw_state
+        # 1. UART Abfrage
+        key = hw.read_keypad()
+        if key:
+            process_key_input(key)
 
         # 2. Fingerprint Abfrage
         finger_id = hw.read_fingerprint()
         if finger_id is not None:
             verify_fingerprint_id(finger_id)
 
-        time.sleep(0.05)
+        time.sleep(0.01)
 
 def console_keypad_simulation():
     """
     Erlaubt es, das Keypad über das Terminal am Mac zu simulieren.
     """
-    print("\r⌨️  SIMULATION AKTIV: Nutze dein Terminal für PIN-Eingabe (0-9, Enter, C)")
+    cprint("⌨️  SIMULATION AKTIV: 0-9, Enter, C (q zum Beenden)")
     import sys, tty, termios
     fd = sys.stdin.fileno()
     
     while is_running:
-        old_settings = termios.tcgetattr(fd)
         try:
-            tty.setraw(fd)
-            ch = sys.stdin.read(1)
-        finally:
-            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+            old_settings = termios.tcgetattr(fd)
+            try:
+                tty.setraw(fd)
+                ch = sys.stdin.read(1)
+            finally:
+                termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
             
-        if ch in "0123456789":
-            process_key_input(ch)
-        elif ch in "\r\n": # Enter
-            process_key_input("#")
-        elif ch in "*Cc\x7f": # C oder Backspace
-            process_key_input("*")
-        elif ch in "fF": # Fingerprint Simulation
-            print("\r\n☝️ [SIM] Simuliere Fingerprint Scan...")
-            verify_fingerprint_id(1)
-        elif ch in "qQ":
-            break
+            if ch in "0123456789":
+                process_key_input(ch)
+            elif ch in "\r\n": 
+                process_key_input("#")
+            elif ch in "*Cc\x7f": 
+                process_key_input("*")
+            elif ch in "fF":
+                cprint("☝️ [SIM] Simuliere Fingerprint Scan...")
+                verify_fingerprint_id(1)
+            elif ch in "qQ":
+                break
+        except:
+            time.sleep(0.5)
 
 def process_key_input(key):
     """
