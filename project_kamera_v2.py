@@ -28,7 +28,7 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-app = Flask(__app__)
+app = Flask(__name__)
 # Flask-Logging deaktivieren (gegen das Chaos im Terminal)
 import logging
 log = logging.getLogger('werkzeug')
@@ -118,7 +118,10 @@ class HardwareManager:
             self.bus = SMBus(1)
             cprint("📡 I2C Bus 1 geöffnet...")
             self.scan_i2c_bus()
-            
+            self.assign_and_init()
+        except Exception as e:
+            self.bus = None
+            cprint(f"⚠️ I2C Bus nicht verfügbar: {e}")
     def init_cpp_engine(self):
         """Kompiliert und startet die C++ Core-Engine"""
         cpp_source = "core_engine.cpp"
@@ -144,6 +147,20 @@ class HardwareManager:
         except Exception as e:
             cprint(f"⚠️ Core Engine Fehler: {e}")
 
+    def _monitor_cpp_engine(self):
+        """Hört auf Nachrichten von der C++ Engine"""
+        if not self.cpp_process: return
+        for line in self.cpp_process.stdout:
+            line = line.strip()
+            if line.startswith("KEY:"):
+                key = line.split(":")[1]
+                process_key_input(key)
+            elif line.startswith("LCD_CMD:"):
+                # C++ meldet Erfolg oder Status
+                pass
+            elif line == "READY":
+                cprint("✅ C++ Core Engine meldet: BEREIT")
+
     def write_lcd(self, line1, line2=""):
         """Schickt den Text an die C++ Engine"""
         if self.cpp_process:
@@ -158,9 +175,6 @@ class HardwareManager:
         if line1 != self.last_line1 or line2 != self.last_line2:
             self.last_line1, self.last_line2 = line1, line2
             print(f"\r📟 [LCD] {line1:10} | {line2:10}", flush=True)
-            self.bus = None
-            print(f"⚠️ I2C Bus nicht verfügbar (Simulation aktiv): {e}")
-            print("💡 Tipp: Läuft das Skript auf dem Pi? Ist I2C aktiviert (raspi-config)?")
 
     def scan_i2c_bus(self):
         """Scant den Bus nach angeschlossenen Geräten"""
