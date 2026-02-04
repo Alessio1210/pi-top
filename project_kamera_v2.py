@@ -53,9 +53,16 @@ UNKNOWN_THRESHOLD = 15  # Ca. 2-3 Sekunden durchgehend unbekannt vor Alarm
 BUZZER_PIN = 6  # A2 auf Foundation Plate ist GPIO 6
 # Wir nutzen gpiozero für einfache Ansteuerung
 try:
-    from gpiozero import Buzzer
-    buzzer = Buzzer(BUZZER_PIN)
+    from pitop import Pitop
+    from pitop.pma import Buzzer as PitopBuzzer
+    from pitop.pma import FoundationPlate
+    buzzer = PitopBuzzer(BUZZER_PIN)
     print("🔊 Buzzer initialisiert auf GPIO 6 (A2)")
+except ImportError:
+    Pitop = None
+    FoundationPlate = None
+    buzzer = None
+    print(f"⚠️ Buzzer Fehler: gpiozero oder pitop nicht gefunden.")
 except Exception as e:
     buzzer = None
     print(f"⚠️ Buzzer Fehler: {e}")
@@ -69,6 +76,7 @@ def cprint(msg):
 class HardwareManager:
     def __init__(self):
         self.bus = None
+        self.ser = None
         self.devices = []
         
         # Standard I2C Adressen
@@ -89,19 +97,28 @@ class HardwareManager:
         self.last_line1 = ""
         self.last_line2 = ""
 
+        # pi-top Hardware Weckruf
+        if Pitop:
+            try:
+                self.pt_device = Pitop()
+                self.plate = FoundationPlate()
+                cprint(f"🔋 pi-top System aktiv (Akku: {self.pt_device.battery.capacity}%)")
+            except Exception as e:
+                cprint(f"⚠️ pi-top Hardware konnte nicht initialisiert werden: {e}")
+
+        # I2C Bus für LCD / Fingerprint
         try:
             from smbus2 import SMBus
             self.bus = SMBus(1)
             cprint("📡 I2C Bus 1 geöffnet...")
             self.scan_i2c_bus()
             
-            # Neue UART-Initialisierung für das ATtiny1616 Keypad
+            # Keypad über UART (ATtiny1616)
             try:
                 self.ser = serial.Serial("/dev/serial0", 9600, timeout=0.05)
-                cprint("📟 UART Port (/dev/serial0) für Keypad geöffnet.")
+                cprint("📟 UART Port (/dev/serial0) für Keypad aktiv.")
             except Exception as e:
-                self.ser = None
-                cprint(f"⚠️ UART Fehler (Keypad nicht über Serial erreichbar): {e}")
+                cprint(f"⚠️ UART Fehler: {e}")
 
             self.assign_and_init()
         except Exception as e:
