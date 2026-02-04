@@ -301,6 +301,9 @@ def console_keypad_simulation():
                 process_key_input("#")
             elif ch in "*Cc\x7f": # C oder Backspace
                 process_key_input("*")
+            elif ch in "fF": # Fingerprint Simulation
+                print("\n☝️ [SIM] Simuliere Fingerprint Scan...")
+                verify_fingerprint_id(1) # Simuliere ID 1
             elif ch in "qQ": # Beenden
                 break
         except:
@@ -371,28 +374,30 @@ def verify_physical_pin(person_id, pin):
     Hilfsfunktion für das physikalische Keypad (nutzt API Logik)
     """
     try:
+        print(f"⏳ [DB] Prüfe PIN {pin} für Person {person_id}...", flush=True)
         response = supabase.table('persons').select('pin, name, employee_number').eq('id', person_id).execute()
-        if not response.data: return
+        
+        if not response.data: 
+            print("❌ Person nicht in DB gefunden")
+            return
         
         user = response.data[0]
-        if str(user.get('pin')) == pin:
-            print(f"✅ Physikalischer PIN korrekt für {user['name']}")
-            hw.set_lcd_color(0, 255, 0)
-            hw.write_lcd(f"Hallo {user['name']}", f"ID: {user.get('employee_number', '---')}")
+        db_pin = str(user.get('pin'))
+        
+        if db_pin == pin:
+            print(f"✅ PIN KORREKT für {user['name']}", flush=True)
+            hw.write_lcd("Hallo!", user['name'])
             if buzzer: buzzer.beep(0.2, 0, 1)
         else:
-            print(f"❌ Physikalischer PIN falsch!")
-            hw.set_lcd_color(255, 0, 0)
+            print(f"❌ PIN FALSCH (Eingabe: {pin}, Soll: {db_pin})", flush=True)
             hw.write_lcd("FEHLER", "Falscher PIN")
             if buzzer: buzzer.beep(0.6, 0, 1)
             send_discord_alert(f"⚠️ **Keypad FEHLER**: Falscher PIN für {user['name']}")
             
-        # Nach 3 Sek zurück zu Normal
-        time.sleep(3)
-        hw.set_lcd_color(255, 255, 255)
-        hw.write_lcd("Warte auf Gesicht")
+        time.sleep(2)
+        hw.write_lcd("Hallo!", "Bereit...")
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"⚠️ API Fehler: {e}", flush=True)
 
 
 
@@ -684,6 +689,7 @@ def ai_worker_thread():
                         person_id = known_face_ids[best_match_index]
                         label_text = f"{name} ({confidence:.0%})"
                         
+                        print(f"🎯 [AI] Gesicht erkannt: {name} ({confidence:.0%})", flush=True)
                         # Speichere Detection in DB
                         save_detection(person_id, name, confidence)
                 
