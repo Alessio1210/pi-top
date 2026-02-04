@@ -54,26 +54,76 @@ except Exception as e:
     buzzer = None
     print(f"⚠️ Buzzer Fehler: {e}")
 
-# I2C Treiber für Grove LCD 16x2 & Keypad (MPR121)
+# I2C Treiber für Hardware-Komponenten (LCD, Keypad, Fingerprint)
 class HardwareManager:
     def __init__(self):
+        self.bus = None
+        self.devices = []
+        
+        # Standard I2C Adressen
+        self.ADDR_LCD = 0x3e
+        self.ADDR_RGB = 0x62
+        self.ADDR_KEYPAD = 0x5a
+        self.ADDR_FINGERPRINT = 0x60  # Standard für DFRobot Capacitive Fingerprint (I2C)
+        
+        # Aktive Adressen (werden durch Scan gesetzt)
+        self.lcd_address = None
+        self.rgb_address = None
+        self.keypad_address = None
+        self.fingerprint_address = None
+
         try:
             from smbus2 import SMBus
             self.bus = SMBus(1)
-            self.lcd_address = 0x3e  # LCD Controller
-            self.rgb_address = 0x62  # RGB Backlight
-            self.keypad_address = 0x5a # MPR121
-            self.init_lcd()
-            self.init_keypad()
-            print("📟 Hardware (LCD & Keypad) initialisiert")
+            self.scan_i2c_bus()
+            self.assign_and_init()
         except Exception as e:
             self.bus = None
-            print(f"⚠️ Hardware Initialisierung fehlgeschlagen: {e}")
+            print(f"⚠️ Hardware Manager Fehler: {e}")
+
+    def scan_i2c_bus(self):
+        """Scant den Bus nach angeschlossenen Geräten"""
+        if not self.bus: return
+        print("🔍 Scanne I2C-Bus nach Hardware...")
+        for address in range(0x03, 0x78):
+            try:
+                # Schneller Schreib-Test (write_quick)
+                self.bus.write_quick(address)
+                self.devices.append(address)
+                print(f"   ✅ Gerät auf 0x{address:02x} gefunden")
+            except OSError:
+                pass
+        
+        if not self.devices:
+            print("   ❌ Keine I2C Geräte gefunden!")
+
+    def assign_and_init(self):
+        """Identifiziert und initialisiert gefundene Hardware"""
+        if self.ADDR_LCD in self.devices:
+            self.lcd_address = self.ADDR_LCD
+            print("   📟 LCD Display erkannt")
+        
+        if self.ADDR_RGB in self.devices:
+            self.rgb_address = self.ADDR_RGB
+            print("   🎨 RGB Backlight erkannt")
+            
+        if self.ADDR_KEYPAD in self.devices:
+            self.keypad_address = self.ADDR_KEYPAD
+            print("   🔢 Keypad (MPR121) erkannt")
+            
+        if self.ADDR_FINGERPRINT in self.devices:
+            self.fingerprint_address = self.ADDR_FINGERPRINT
+            print("   ☝️ Fingerprint Sensor erkannt")
+
+        # Initialisierung
+        if self.lcd_address: self.init_lcd()
+        if self.keypad_address: self.init_keypad()
+        if self.fingerprint_address: self.init_fingerprint()
 
     def init_lcd(self):
-        if not self.bus: return
+        if not self.bus or not self.lcd_address: return
         try:
-            # LCD Initialisierungs-Sequenz (Standard HD44780 über I2C)
+            # LCD Initialisierungs-Sequenz
             def command(cmd):
                 self.bus.write_byte_data(self.lcd_address, 0x80, cmd)
             
@@ -86,31 +136,36 @@ class HardwareManager:
             time.sleep(0.05)
             command(0x06) # entry mode set
             
-            # RGB Backlight auf Weiß (Standard)
-            self.bus.write_byte_data(self.rgb_address, 0x00, 0x00)
-            self.bus.write_byte_data(self.rgb_address, 0x01, 0x00)
-            self.bus.write_byte_data(self.rgb_address, 0x08, 0xAA)
-            self.bus.write_byte_data(self.rgb_address, 0x04, 255) # R
-            self.bus.write_byte_data(self.rgb_address, 0x03, 255) # G
-            self.bus.write_byte_data(self.rgb_address, 0x02, 255) # B
+            # RGB Backlight initialisieren (falls vorhanden)
+            if self.rgb_address:
+                self.bus.write_byte_data(self.rgb_address, 0x00, 0x00)
+                self.bus.write_byte_data(self.rgb_address, 0x01, 0x00)
+                self.bus.write_byte_data(self.rgb_address, 0x08, 0xAA)
+                self.set_lcd_color(255, 255, 255) # Weiß
         except: pass
 
     def init_keypad(self):
-        if not self.bus: return
+        if not self.bus or not self.keypad_address: return
         try:
-            # MPR121 Reset & Config (Auszug)
+            # MPR121 Reset & Config
             self.bus.write_byte_data(self.keypad_address, 0x80, 0x63) # Soft reset
             time.sleep(0.01)
             self.bus.write_byte_data(self.keypad_address, 0x5e, 0x00) # Stop mode
-            # Schwellenwerte für Touch
+            # Schwellenwerte
             for i in range(12):
                 self.bus.write_byte_data(self.keypad_address, 0x41 + 2*i, 12) # Touch th
                 self.bus.write_byte_data(self.keypad_address, 0x42 + 2*i, 6)  # Release th
             self.bus.write_byte_data(self.keypad_address, 0x5e, 0x0c) # Start (12 electrodes)
         except: pass
 
+    def init_fingerprint(self):
+        """Initialisiert den Fingerprint Sensor (Platzhalter für spezifische Login-Sequenz)"""
+        if not self.bus or not self.fingerprint_address: return
+        print("   ✅ Fingerprint Sensor initialisiert")
+        # Hier könnten spezifische Boot-Befehle für den Sensor stehen
+
     def write_lcd(self, line1, line2=""):
-        if not self.bus: return
+        if not self.bus or not self.lcd_address: return
         try:
             # Clear & Home
             self.bus.write_byte_data(self.lcd_address, 0x80, 0x01)
@@ -126,7 +181,7 @@ class HardwareManager:
         except: pass
 
     def set_lcd_color(self, r, g, b):
-        if not self.bus: return
+        if not self.bus or not self.rgb_address: return
         try:
             self.bus.write_byte_data(self.rgb_address, 0x04, r)
             self.bus.write_byte_data(self.rgb_address, 0x03, g)
@@ -134,13 +189,27 @@ class HardwareManager:
         except: pass
 
     def read_keypad(self):
-        if not self.bus: return 0
+        if not self.bus or not self.keypad_address: return 0
         try:
-            # MPR121 Status Register 0x00 & 0x01 (12 bits)
             lsb = self.bus.read_byte_data(self.keypad_address, 0x00)
             msb = self.bus.read_byte_data(self.keypad_address, 0x01)
             return (msb << 8) | lsb
         except: return 0
+
+    def read_fingerprint(self):
+        """
+        Liest den Fingerprint Status.
+        ACHTUNG: Dies ist ein vereinfachtes Beispiel. 
+        Echte I2C Fingerprint Sensoren benötigen oft eine komplexere Befehlsstruktur.
+        """
+        if not self.bus or not self.fingerprint_address: return None
+        try:
+            # Beispiel: Lese Status-Register vom Sensor (muss an Hardware angepasst werden)
+            status = self.bus.read_byte_data(self.fingerprint_address, 0x00)
+            # Wenn 0x08 (Finger erkannt) o.ä.
+            # return status 
+            return None # Placeholder
+        except: return None
 
 hw = HardwareManager()
 hardware_pin_buffer = ""
@@ -161,48 +230,79 @@ def physical_hardware_loop():
         1024: "0", 512: "*", 2048: "#"
     }
     
-    print("⌨️  Keypad-Überwachung aktiv. Drücke Tasten am Gerät...")
+    print("⌨️  Hardware-Überwachung aktiv (Keypad & Fingerprint)...")
     hw.set_lcd_color(255, 255, 255) # Weiß
-    hw.write_lcd("Bereit", "PIN eingeben:")
+    hw.write_lcd("Bereit", "PIN oder Finger")
 
     while is_running:
+        # --- 1. KEYPAD LOGIK ---
         raw_state = hw.read_keypad()
         
         # Wenn eine Taste gedrückt wurde (und vorher keine gedrückt war)
         if raw_state != 0 and last_key_state == 0:
-            print(f"🔘 Keypad Bitmaske: {raw_state}") # Debug für die Konsole
-            
             key = key_map.get(raw_state)
             if key:
                 print(f"👉 Taste gedrückt: {key}")
                 
                 if key == "#": # ENTER
-                    print(f"🚀 PIN abgeschickt: {hardware_pin_buffer}")
                     if last_detected_person["id"]:
                         verify_physical_pin(last_detected_person["id"], hardware_pin_buffer)
                     else:
                         hw.write_lcd("Kein Gesicht", "erkannt!")
                         time.sleep(2)
-                        hw.write_lcd("Bereit", "PIN eingeben:")
+                        hw.write_lcd("Bereit", "PIN/Finger:")
                     hardware_pin_buffer = ""
                     
                 elif key == "*": # CLEAR
                     hardware_pin_buffer = ""
-                    print("🧹 PIN gelöscht")
                     hw.write_lcd("Geloescht", "")
                     time.sleep(1)
-                    hw.write_lcd("Bereit", "PIN eingeben:")
+                    hw.write_lcd("Bereit", "PIN/Finger:")
                     
                 else: # NUMMER
                     if len(hardware_pin_buffer) < 4:
                         hardware_pin_buffer += key
-                    
-                    # DEBUG: Zeige die echten Zahlen statt Sternchen
-                    print(f"📟 Aktuelle Eingabe: {hardware_pin_buffer}")
                     hw.write_lcd("PIN Eingabe:", hardware_pin_buffer)
         
         last_key_state = raw_state
+
+        # --- 2. FINGERPRINT LOGIK ---
+        finger_id = hw.read_fingerprint()
+        if finger_id is not None:
+            print(f"☝️ Finger erkannt! ID: {finger_id}")
+            verify_fingerprint_id(finger_id)
+
         time.sleep(0.05)
+
+def verify_fingerprint_id(finger_id):
+    """
+    Sucht die Person zum Fingerprint in der Datenbank und loggt sie ein.
+    """
+    try:
+        # Hier müsste eine Spalte 'fingerprint_id' in der DB existieren
+        response = supabase.table('persons').select('name, employee_number').eq('fingerprint_id', finger_id).execute()
+        
+        if response.data:
+            user = response.data[0]
+            print(f"✅ Fingerprint Match: {user['name']}")
+            hw.set_lcd_color(0, 255, 0) # Grün
+            hw.write_lcd("FINGER OK", user['name'])
+            if buzzer: buzzer.beep(0.2, 0, 1)
+            # Speichere Detection
+            save_detection(user.get('id'), user['name'], 1.0)
+        else:
+            print(f"❌ Fingerprint ID {finger_id} unbekannt")
+            hw.set_lcd_color(255, 165, 0) # Orange
+            hw.write_lcd("FINGER UNBEKANNT", f"ID: {finger_id}")
+            if buzzer: buzzer.beep(0.4, 0, 1)
+        
+        time.sleep(3)
+        hw.set_lcd_color(255, 255, 255)
+        hw.write_lcd("Bereit", "PIN oder Finger")
+    except Exception as e:
+        print(f"⚠️ Fingerprint Fehler: {e}")
+        hw.write_lcd("FEHLER", "DB Check failed")
+
 
 def verify_physical_pin(person_id, pin):
     """
