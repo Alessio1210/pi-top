@@ -129,9 +129,11 @@ class HardwareManager:
             
             time.sleep(0.05)
             command(0x38) # 2 lines, 5x8 font
-            time.sleep(0.05)
+            time.sleep(0.005)
+            command(0x38) # repeat to be sure
+            time.sleep(0.005)
             command(0x0C) # display on, cursor off
-            time.sleep(0.05)
+            time.sleep(0.005)
             command(0x01) # clear
             time.sleep(0.05)
             command(0x06) # entry mode set
@@ -142,7 +144,10 @@ class HardwareManager:
                 self.bus.write_byte_data(self.rgb_address, 0x01, 0x00)
                 self.bus.write_byte_data(self.rgb_address, 0x08, 0xAA)
                 self.set_lcd_color(255, 255, 255) # Weiß
-        except: pass
+            
+            self.write_lcd("Hallo!", "Bereit...")
+        except Exception as e:
+            print(f"⚠️ LCD Init Fehler: {e}")
 
     def init_keypad(self):
         if not self.bus or not self.keypad_address: return
@@ -650,22 +655,28 @@ def ai_worker_thread():
                             break
 
                 
-            # === Alarm Logik ===
+            # === Alarm Logik & LCD Update ===
             has_known = any(n != "Unbekannt" for n in current_face_names_for_alert)
             has_unknown = any(n == "Unbekannt" for n in current_face_names_for_alert)
             
             if has_known:
                 unknown_face_counter = 0
+                # LCD Update bei bekanntem Gesicht
+                known_names = [n for n in current_face_names_for_alert if n != "Unbekannt"]
+                if known_names:
+                    hw.write_lcd("Hallo!", known_names[0])
             elif has_unknown:
                 unknown_face_counter += 1
+                hw.write_lcd("Unbekannt", "Wer bist du?")
                 if unknown_face_counter >= UNKNOWN_THRESHOLD:
                     trigger_alert(frame_to_process)
                     unknown_face_counter = 0
             else:
-                 # Kein Gesicht -> Zähler langsam abbauen oder resetten?
-                 # Resetten ist sicherer
+                 # Kein Gesicht -> Reset auf Standby
                  if unknown_face_counter > 0:
                      unknown_face_counter -= 1
+                 if unknown_face_counter == 0:
+                     hw.write_lcd("Hallo!", "Bereit...")
 
         except Exception as e:
             print(f"⚠️ AI Thread Fehler: {e}")
