@@ -55,19 +55,22 @@ except Exception as e:
     print(f"⚠️ Buzzer Fehler: {e}")
 
 # I2C Treiber für Hardware-Komponenten (LCD, Keypad, Fingerprint)
+# I2C Treiber für Hardware-Komponenten (LCD, Keypad, Fingerprint)
 class HardwareManager:
     def __init__(self):
         self.bus = None
         self.devices = []
         
         # Standard I2C Adressen
-        self.ADDR_LCD = 0x3e
-        self.ADDR_RGB = 0x62
+        self.ADDR_GROVE_LCD = 0x3e
+        self.ADDR_GROVE_RGB = 0x62
+        self.ADDR_GENERIC_LCD = [0x27, 0x3f]
         self.ADDR_KEYPAD = 0x5a
-        self.ADDR_FINGERPRINT = 0x60  # Standard für DFRobot Capacitive Fingerprint (I2C)
+        self.ADDR_FINGERPRINT = 0x60
         
-        # Aktive Adressen (werden durch Scan gesetzt)
+        # Aktive Adressen & Typen
         self.lcd_address = None
+        self.lcd_type = "GROVE" # oder "GENERIC"
         self.rgb_address = None
         self.keypad_address = None
         self.fingerprint_address = None
@@ -87,7 +90,6 @@ class HardwareManager:
         print("🔍 Scanne I2C-Bus nach Hardware...")
         for address in range(0x03, 0x78):
             try:
-                # Schneller Schreib-Test (write_quick)
                 self.bus.write_quick(address)
                 self.devices.append(address)
                 print(f"   ✅ Gerät auf 0x{address:02x} gefunden")
@@ -99,12 +101,21 @@ class HardwareManager:
 
     def assign_and_init(self):
         """Identifiziert und initialisiert gefundene Hardware"""
-        if self.ADDR_LCD in self.devices:
-            self.lcd_address = self.ADDR_LCD
-            print("   📟 LCD Display erkannt")
+        # LCD Erkennung
+        if self.ADDR_GROVE_LCD in self.devices:
+            self.lcd_address = self.ADDR_GROVE_LCD
+            self.lcd_type = "GROVE"
+            print("   📟 Grove LCD erkannt (0x3e)")
+        else:
+            for addr in self.ADDR_GENERIC_LCD:
+                if addr in self.devices:
+                    self.lcd_address = addr
+                    self.lcd_type = "GENERIC"
+                    print(f"   📟 Generisches LCD an 0x{addr:02x} erkannt")
+                    break
         
-        if self.ADDR_RGB in self.devices:
-            self.rgb_address = self.ADDR_RGB
+        if self.ADDR_GROVE_RGB in self.devices:
+            self.rgb_address = self.ADDR_GROVE_RGB
             print("   🎨 RGB Backlight erkannt")
             
         if self.ADDR_KEYPAD in self.devices:
@@ -123,66 +134,76 @@ class HardwareManager:
     def init_lcd(self):
         if not self.bus or not self.lcd_address: return
         try:
-            # LCD Initialisierungs-Sequenz
-            def command(cmd):
-                self.bus.write_byte_data(self.lcd_address, 0x80, cmd)
-            
-            time.sleep(0.05)
-            command(0x38) # 2 lines, 5x8 font
-            time.sleep(0.005)
-            command(0x38) # repeat to be sure
-            time.sleep(0.005)
-            command(0x0C) # display on, cursor off
-            time.sleep(0.005)
-            command(0x01) # clear
-            time.sleep(0.05)
-            command(0x06) # entry mode set
-            
-            # RGB Backlight initialisieren (falls vorhanden)
-            if self.rgb_address:
-                self.bus.write_byte_data(self.rgb_address, 0x00, 0x00)
-                self.bus.write_byte_data(self.rgb_address, 0x01, 0x00)
-                self.bus.write_byte_data(self.rgb_address, 0x08, 0xAA)
-                self.set_lcd_color(255, 255, 255) # Weiß
+            if self.lcd_type == "GROVE":
+                def command(cmd): self.bus.write_byte_data(self.lcd_address, 0x80, cmd)
+                time.sleep(0.05)
+                command(0x38); time.sleep(0.005)
+                command(0x0C); time.sleep(0.005)
+                command(0x01); time.sleep(0.05)
+                command(0x06)
+                if self.rgb_address:
+                    self.bus.write_byte_data(self.rgb_address, 0x00, 0x00)
+                    self.bus.write_byte_data(self.rgb_address, 0x08, 0xAA)
+                    self.set_lcd_color(255, 255, 255)
+            else:
+                # Initialisierung für generische PCF8574 LCDs (4-bit Mode)
+                self._lcd_generic_write(0x33, mode=0) # 8-bit mode init
+                self._lcd_generic_write(0x32, mode=0) # Switch to 4-bit
+                self._lcd_generic_write(0x28, mode=0) # 2 lines, 5x8
+                self._lcd_generic_write(0x0C, mode=0) # Display on
+                self._lcd_generic_write(0x01, mode=0) # Clear
+                time.sleep(0.05)
             
             self.write_lcd("Hallo!", "Bereit...")
         except Exception as e:
             print(f"⚠️ LCD Init Fehler: {e}")
 
+    def _lcd_generic_write(self, data, mode):
+        """Hilfsfunktion für generische LCDs (PCF8574)"""
+        # mode 0 = command, 1 = data
+        # Bit 3 = Backlight, Bit 2 = Enable, Bit 1 = R/W, Bit 0 = RS
+        backlight = 0x08 
+        high_nibble = (data & 0xF0) | backlight | mode
+        low_nibble = ((data << 4) & 0xF0) | backlight | mode
+        
+        # Pulse Enable
+        self.bus.write_byte(self.lcd_address, high_nibble | 0x04)
+        self.bus.write_byte(self.lcd_address, high_nibble & ~0x04)
+        self.bus.write_byte(self.lcd_address, low_nibble | 0x04)
+        self.bus.write_byte(self.lcd_address, low_nibble & ~0x04)
+
     def init_keypad(self):
         if not self.bus or not self.keypad_address: return
         try:
-            # MPR121 Reset & Config
-            self.bus.write_byte_data(self.keypad_address, 0x80, 0x63) # Soft reset
+            self.bus.write_byte_data(self.keypad_address, 0x80, 0x63)
             time.sleep(0.01)
-            self.bus.write_byte_data(self.keypad_address, 0x5e, 0x00) # Stop mode
-            # Schwellenwerte
+            self.bus.write_byte_data(self.keypad_address, 0x5e, 0x00)
             for i in range(12):
-                self.bus.write_byte_data(self.keypad_address, 0x41 + 2*i, 12) # Touch th
-                self.bus.write_byte_data(self.keypad_address, 0x42 + 2*i, 6)  # Release th
-            self.bus.write_byte_data(self.keypad_address, 0x5e, 0x0c) # Start (12 electrodes)
+                self.bus.write_byte_data(self.keypad_address, 0x41 + 2*i, 12)
+                self.bus.write_byte_data(self.keypad_address, 0x42 + 2*i, 6)
+            self.bus.write_byte_data(self.keypad_address, 0x5e, 0x0c)
         except: pass
 
     def init_fingerprint(self):
-        """Initialisiert den Fingerprint Sensor (Platzhalter für spezifische Login-Sequenz)"""
         if not self.bus or not self.fingerprint_address: return
         print("   ✅ Fingerprint Sensor initialisiert")
-        # Hier könnten spezifische Boot-Befehle für den Sensor stehen
 
     def write_lcd(self, line1, line2=""):
         if not self.bus or not self.lcd_address: return
         try:
-            # Clear & Home
-            self.bus.write_byte_data(self.lcd_address, 0x80, 0x01)
-            time.sleep(0.01)
-            # Line 1
-            self.bus.write_byte_data(self.lcd_address, 0x80, 0x80)
-            for char in line1[:16]:
-                self.bus.write_byte_data(self.lcd_address, 0x40, ord(char))
-            # Line 2
-            self.bus.write_byte_data(self.lcd_address, 0x80, 0xc0)
-            for char in line2[:16]:
-                self.bus.write_byte_data(self.lcd_address, 0x40, ord(char))
+            if self.lcd_type == "GROVE":
+                self.bus.write_byte_data(self.lcd_address, 0x80, 0x01)
+                time.sleep(0.01)
+                self.bus.write_byte_data(self.lcd_address, 0x80, 0x80)
+                for char in line1[:16]: self.bus.write_byte_data(self.lcd_address, 0x40, ord(char))
+                self.bus.write_byte_data(self.lcd_address, 0x80, 0xc0)
+                for char in line2[:16]: self.bus.write_byte_data(self.lcd_address, 0x40, ord(char))
+            else:
+                self._lcd_generic_write(0x01, mode=0) # Clear
+                self._lcd_generic_write(0x80, mode=0) # Line 1
+                for char in line1[:16]: self._lcd_generic_write(ord(char), mode=1)
+                self._lcd_generic_write(0xC0, mode=0) # Line 2
+                for char in line2[:16]: self._lcd_generic_write(ord(char), mode=1)
         except: pass
 
     def set_lcd_color(self, r, g, b):
@@ -202,18 +223,10 @@ class HardwareManager:
         except: return 0
 
     def read_fingerprint(self):
-        """
-        Liest den Fingerprint Status.
-        ACHTUNG: Dies ist ein vereinfachtes Beispiel. 
-        Echte I2C Fingerprint Sensoren benötigen oft eine komplexere Befehlsstruktur.
-        """
         if not self.bus or not self.fingerprint_address: return None
         try:
-            # Beispiel: Lese Status-Register vom Sensor (muss an Hardware angepasst werden)
             status = self.bus.read_byte_data(self.fingerprint_address, 0x00)
-            # Wenn 0x08 (Finger erkannt) o.ä.
-            # return status 
-            return None # Placeholder
+            return None
         except: return None
 
 hw = HardwareManager()
