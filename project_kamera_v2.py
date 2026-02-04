@@ -21,13 +21,14 @@ import uuid
 
 import requests
 import serial
+import subprocess
 from supabase import create_client, Client
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
 
-app = Flask(__name__)
+app = Flask(__app__)
 # Flask-Logging deaktivieren (gegen das Chaos im Terminal)
 import logging
 log = logging.getLogger('werkzeug')
@@ -77,8 +78,13 @@ class HardwareManager:
     def __init__(self):
         self.bus = None
         self.ser = None
+        self.cpp_process = None
         self.devices = []
         
+        # 1. C++ Engine vorbereiten & starten
+        self.init_cpp_engine()
+        
+        # 2. pi-top Hardware Weckruf
         # Standard I2C Adressen
         self.ADDR_GROVE_LCD = 0x3e
         self.ADDR_GROVE_RGB = 0x62
@@ -113,15 +119,45 @@ class HardwareManager:
             cprint("📡 I2C Bus 1 geöffnet...")
             self.scan_i2c_bus()
             
-            # Keypad über UART (ATtiny1616)
-            try:
-                self.ser = serial.Serial("/dev/serial0", 9600, timeout=0.05)
-                cprint("📟 UART Port (/dev/serial0) für Keypad aktiv.")
-            except Exception as e:
-                cprint(f"⚠️ UART Fehler: {e}")
-
-            self.assign_and_init()
+    def init_cpp_engine(self):
+        """Kompiliert und startet die C++ Core-Engine"""
+        cpp_source = "core_engine.cpp"
+        cpp_binary = "./core_engine"
+        
+        try:
+            # Automatisches Kompilieren
+            if os.path.exists(cpp_source):
+                cprint("🛠 Kompiliere Hochleistungs-Core (C++)...")
+                subprocess.run(["clang++", "-O3", cpp_source, "-o", cpp_binary], check=True)
+            
+            if os.path.exists(cpp_binary):
+                cprint("🚀 Starte C++ Core Engine...")
+                self.cpp_process = subprocess.Popen(
+                    [cpp_binary], 
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE, 
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    bufsize=1
+                )
+                threading.Thread(target=self._monitor_cpp_engine, daemon=True).start()
         except Exception as e:
+            cprint(f"⚠️ Core Engine Fehler: {e}")
+
+    def write_lcd(self, line1, line2=""):
+        """Schickt den Text an die C++ Engine"""
+        if self.cpp_process:
+            try:
+                # Wir schicken den Text einfach an den C++ Prozess
+                msg = f"LCD:{line1}|{line2}\n"
+                self.cpp_process.stdin.write(msg)
+                self.cpp_process.stdin.flush()
+            except: pass
+        
+        # Fallback Terminal-Ausgabe
+        if line1 != self.last_line1 or line2 != self.last_line2:
+            self.last_line1, self.last_line2 = line1, line2
+            print(f"\r📟 [LCD] {line1:10} | {line2:10}", flush=True)
             self.bus = None
             print(f"⚠️ I2C Bus nicht verfügbar (Simulation aktiv): {e}")
             print("💡 Tipp: Läuft das Skript auf dem Pi? Ist I2C aktiviert (raspi-config)?")
@@ -301,22 +337,16 @@ last_key_state = 0
 
 def physical_hardware_loop():
     """
-    Thread der das physikalische Keypad (UART) überwacht
+    Thread der Fingerprint und sonstige I2C Sensoren überwacht
+    (Keypad wird jetzt über die C++ Engine in HardwareManager gesteuert)
     """
-    global hardware_pin_buffer
-    
     while is_running:
-        # 1. UART Abfrage
-        key = hw.read_keypad()
-        if key:
-            process_key_input(key)
-
-        # 2. Fingerprint Abfrage
+        # 1. Fingerprint Abfrage via I2C
         finger_id = hw.read_fingerprint()
         if finger_id is not None:
             verify_fingerprint_id(finger_id)
 
-        time.sleep(0.01)
+        time.sleep(0.1)
 
 def console_keypad_simulation():
     """
