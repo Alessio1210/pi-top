@@ -126,7 +126,9 @@ class HardwareManager:
             
         if self.ADDR_KEYPAD in self.devices:
             self.keypad_address = self.ADDR_KEYPAD
-            print("   🔢 Keypad (MPR121) erkannt")
+            print("   🔢 [HARDWARE] Keypad (MPR121) auf 0x5a GEFUNDEN!", flush=True)
+        else:
+            print("   ⚠️  [HARDWARE] Keypad (0x5a) NICHT gefunden. Steck es in einen I2C-Port!", flush=True)
             
         if self.ADDR_FINGERPRINT in self.devices:
             self.fingerprint_address = self.ADDR_FINGERPRINT
@@ -195,15 +197,12 @@ class HardwareManager:
         print("   ✅ Fingerprint Sensor initialisiert")
 
     def write_lcd(self, line1, line2=""):
-        # Nur schreiben, wenn sich der Text wirklich geändert hat
         if line1 == self.last_line1 and line2 == self.last_line2:
             return
-            
-        self.last_line1 = line1
-        self.last_line2 = line2
+        self.last_line1, self.last_line2 = line1, line2
 
-        # Konsole-Ausgabe (Nur bei Änderung)
-        print(f"\n📟 [LCD] {line1:10} | {line2:10}", flush=True)
+        # Saubere einzeilige Ausgabe statt Boxen
+        print(f"📟 [LCD] {line1:10} | {line2:10}", flush=True)
         
         if not self.bus or not self.lcd_address: return
         try:
