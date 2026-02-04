@@ -252,62 +252,89 @@ last_key_state = 0
 
 def physical_hardware_loop():
     """
-    Thread der das physikalische Keypad überwacht
+    Thread der das physikalische Keypad (MPR121) überwacht
     """
     global hardware_pin_buffer, last_key_state
     
-    # Mapping für Grove Touch Keypad (MPR121)
-    # Bit 0 = 1, Bit 1 = 2, Bit 2 = 3, etc.
     key_map = {
         1: "1", 2: "2", 4: "3", 
         8: "4", 16: "5", 32: "6", 
         64: "7", 128: "8", 256: "9", 
         1024: "0", 512: "*", 2048: "#"
     }
-    
-    print("⌨️  Hardware-Überwachung aktiv (Keypad & Fingerprint)...")
-    hw.set_lcd_color(255, 255, 255) # Weiß
-    hw.write_lcd("Bereit", "PIN oder Finger")
 
     while is_running:
-        # --- 1. KEYPAD LOGIK ---
+        # 1. Physikalische Abfrage (nur wenn Bus da ist)
         raw_state = hw.read_keypad()
-        
-        # Wenn eine Taste gedrückt wurde (und vorher keine gedrückt war)
         if raw_state != 0 and last_key_state == 0:
             key = key_map.get(raw_state)
-            if key:
-                print(f"👉 Taste gedrückt: {key}")
-                
-                if key == "#": # ENTER
-                    if last_detected_person["id"]:
-                        verify_physical_pin(last_detected_person["id"], hardware_pin_buffer)
-                    else:
-                        hw.write_lcd("Kein Gesicht", "erkannt!")
-                        time.sleep(2)
-                        hw.write_lcd("Bereit", "PIN/Finger:")
-                    hardware_pin_buffer = ""
-                    
-                elif key == "*": # CLEAR
-                    hardware_pin_buffer = ""
-                    hw.write_lcd("Geloescht", "")
-                    time.sleep(1)
-                    hw.write_lcd("Bereit", "PIN/Finger:")
-                    
-                else: # NUMMER
-                    if len(hardware_pin_buffer) < 4:
-                        hardware_pin_buffer += key
-                    hw.write_lcd("PIN Eingabe:", hardware_pin_buffer)
-        
+            if key: process_key_input(key)
         last_key_state = raw_state
 
-        # --- 2. FINGERPRINT LOGIK ---
+        # 2. Fingerprint Abfrage
         finger_id = hw.read_fingerprint()
         if finger_id is not None:
-            print(f"☝️ Finger erkannt! ID: {finger_id}")
             verify_fingerprint_id(finger_id)
 
         time.sleep(0.05)
+
+def console_keypad_simulation():
+    """
+    Erlaubt es, das Keypad über das Terminal am Mac zu simulieren.
+    """
+    print("⌨️  SIMULATION: Nutze dein Terminal für PIN-Eingabe (Zahlen, Enter für #, Backspace/C für *)")
+    while is_running:
+        try:
+            # Wir nutzen sys.stdin.read(1) für Zeichenweise Eingabe
+            import sys, tty, termios
+            fd = sys.stdin.fileno()
+            old_settings = termios.tcgetattr(fd)
+            try:
+                tty.setraw(sys.stdin.fileno())
+                ch = sys.stdin.read(1)
+            finally:
+                termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+            
+            if ch in "0123456789":
+                process_key_input(ch)
+            elif ch in "\r\n": # Enter
+                process_key_input("#")
+            elif ch in "*Cc\x7f": # C oder Backspace
+                process_key_input("*")
+            elif ch in "qQ": # Beenden
+                break
+        except:
+            time.sleep(1) # Fallback für Systeme ohne tty
+
+def process_key_input(key):
+    """
+    Zentrale Logik für Keypad-Eingaben
+    """
+    global hardware_pin_buffer
+    
+    if key == "#": # ENTER
+        if hardware_pin_buffer:
+            if last_detected_person["id"]:
+                verify_physical_pin(last_detected_person["id"], hardware_pin_buffer)
+            else:
+                hw.write_lcd("Kein Gesicht", "erkannt!")
+                time.sleep(2)
+                hw.write_lcd("Bereit", "PIN/Finger:")
+            hardware_pin_buffer = ""
+            
+    elif key == "*": # CLEAR
+        hardware_pin_buffer = ""
+        hw.write_lcd("Geloescht", "")
+        time.sleep(1)
+        hw.write_lcd("Bereit", "PIN/Finger:")
+        
+    else: # NUMMER
+        if len(hardware_pin_buffer) < 4:
+            hardware_pin_buffer += key
+        
+        # Zeige maskierte PIN am LCD
+        masked_pin = "*" * len(hardware_pin_buffer)
+        hw.write_lcd("PIN Eingabe:", f"{masked_pin} (ID:{key})")
 
 def verify_fingerprint_id(finger_id):
     """
@@ -1564,9 +1591,12 @@ def main():
     ai_connector = threading.Thread(target=ai_worker_thread, daemon=True)
     ai_connector.start()
     
-    # 🚀 Starte Hardware Loop
+    # 🚀 Starte Hardware & Simulations Threads
     hw_thread = threading.Thread(target=physical_hardware_loop, daemon=True)
     hw_thread.start()
+    
+    sim_thread = threading.Thread(target=console_keypad_simulation, daemon=True)
+    sim_thread.start()
     
     print("\n🌐 Server-URLs:")
 
