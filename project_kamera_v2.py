@@ -128,8 +128,8 @@ class HardwareManager:
             self.fingerprint_address = self.ADDR_FINGERPRINT
             print("   ☝️ Fingerprint Sensor erkannt")
 
-        # Initialisierung
-        if self.lcd_address: self.init_lcd()
+        # Initialisierung (LCD immer, auch für Simulation)
+        self.init_lcd()
         if self.keypad_address: self.init_keypad()
         if self.fingerprint_address: self.init_fingerprint()
 
@@ -191,8 +191,13 @@ class HardwareManager:
         print("   ✅ Fingerprint Sensor initialisiert")
 
     def write_lcd(self, line1, line2=""):
-        # Konsole-Fallback (damit du siehst, was passieren würde)
-        print(f"📟 [LCD] L1: {line1:16} | L2: {line2:16}")
+        # Konsole-Überwachung (WICHTIG für dich am Mac)
+        # Wir nutzen flush=True, damit du es sofort siehst
+        print(f"\n✨ LCD-DISPLAY-SIMULATION ✨", flush=True)
+        print(f"┌──────────────────┐", flush=True)
+        print(f"│ {line1:16} │", flush=True)
+        print(f"│ {line2:16} │", flush=True)
+        print(f"└──────────────────┘\n", flush=True)
         
         if not self.bus or not self.lcd_address: return
         try:
