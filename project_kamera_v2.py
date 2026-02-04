@@ -201,8 +201,8 @@ class HardwareManager:
             return
         self.last_line1, self.last_line2 = line1, line2
 
-        # Saubere einzeilige Ausgabe statt Boxen
-        print(f"📟 [LCD] {line1:10} | {line2:10}", flush=True)
+        # \r erzwingt den Cursor an den linken Rand (fixiert das Treppen-Styling)
+        print(f"\r📟 [LCD] {line1:10} | {line2:10}", flush=True)
         
         if not self.bus or not self.lcd_address: return
         try:
@@ -281,32 +281,29 @@ def console_keypad_simulation():
     """
     Erlaubt es, das Keypad über das Terminal am Mac zu simulieren.
     """
-    print("⌨️  SIMULATION: Nutze dein Terminal für PIN-Eingabe (Zahlen, Enter für #, Backspace/C für *)")
+    print("\r⌨️  SIMULATION AKTIV: Nutze dein Terminal für PIN-Eingabe (0-9, Enter, C)")
+    import sys, tty, termios
+    fd = sys.stdin.fileno()
+    
     while is_running:
+        old_settings = termios.tcgetattr(fd)
         try:
-            # Wir nutzen sys.stdin.read(1) für Zeichenweise Eingabe
-            import sys, tty, termios
-            fd = sys.stdin.fileno()
-            old_settings = termios.tcgetattr(fd)
-            try:
-                tty.setraw(sys.stdin.fileno())
-                ch = sys.stdin.read(1)
-            finally:
-                termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+            tty.setraw(fd)
+            ch = sys.stdin.read(1)
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
             
-            if ch in "0123456789":
-                process_key_input(ch)
-            elif ch in "\r\n": # Enter
-                process_key_input("#")
-            elif ch in "*Cc\x7f": # C oder Backspace
-                process_key_input("*")
-            elif ch in "fF": # Fingerprint Simulation
-                print("\n☝️ [SIM] Simuliere Fingerprint Scan...")
-                verify_fingerprint_id(1) # Simuliere ID 1
-            elif ch in "qQ": # Beenden
-                break
-        except:
-            time.sleep(1) # Fallback für Systeme ohne tty
+        if ch in "0123456789":
+            process_key_input(ch)
+        elif ch in "\r\n": # Enter
+            process_key_input("#")
+        elif ch in "*Cc\x7f": # C oder Backspace
+            process_key_input("*")
+        elif ch in "fF": # Fingerprint Simulation
+            print("\r\n☝️ [SIM] Simuliere Fingerprint Scan...")
+            verify_fingerprint_id(1)
+        elif ch in "qQ":
+            break
 
 def process_key_input(key):
     """
@@ -1603,15 +1600,14 @@ def main():
     sim_thread = threading.Thread(target=console_keypad_simulation, daemon=True)
     sim_thread.start()
     
-    print("\n🌐 Server-URLs:")
-
-    print(f"   Lokal:        http://localhost:{SERVER_PORT}")
-    print(f"   Netzwerk:     http://0.0.0.0:{SERVER_PORT}")
-    print("\n📡 Seiten:")
-    print(f"   Live-Stream:  http://localhost:{SERVER_PORT}/")
-    print(f"   Enrollment:   http://localhost:{SERVER_PORT}/enroll")
-    print(f"   Dashboard:    http://localhost:{SERVER_PORT}/dashboard")
-    print("\n⏹️  Drücke Ctrl+C zum Beenden")
+    print("\r\n🌐 Server-URLs:")
+    print(f"\r   Lokal:        http://localhost:{SERVER_PORT}")
+    print(f"\r   Netzwerk:     http://0.0.0.0:{SERVER_PORT}")
+    print("\r\n📡 Seiten:")
+    print(f"\r   Live-Stream:  http://localhost:{SERVER_PORT}/")
+    print(f"\r   Enrollment:   http://localhost:{SERVER_PORT}/enroll")
+    print(f"\r   Dashboard:    http://localhost:{SERVER_PORT}/dashboard")
+    print("\r\n⏹️  Drücke Ctrl+C zum Beenden")
     print("=" * 60)
     
     try:
