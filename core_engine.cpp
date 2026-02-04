@@ -70,18 +70,51 @@ public:
   }
 
   void initLCD() {
+    if (lcd_addr == -1)
+      return;
     ioctl(i2c_fd, I2C_SLAVE, lcd_addr);
-    auto sendCmd = [&](unsigned char cmd) {
-      unsigned char buf[2] = {0x80, cmd};
-      write(i2c_fd, buf, 2);
-    };
-    usleep(50000);
-    sendCmd(0x38); // Function set
-    usleep(50);
-    sendCmd(0x0C); // Display on
-    usleep(50);
-    sendCmd(0x01); // Clear
-    usleep(2000);
+
+    if (lcd_addr == 0x3e) { // Grove LCD Protocol
+      auto sendCmd = [&](unsigned char cmd) {
+        unsigned char buf[2] = {0x80, cmd};
+        write(i2c_fd, buf, 2);
+      };
+      usleep(50000);
+      sendCmd(0x38);
+      usleep(50);
+      sendCmd(0x0C);
+      usleep(50);
+      sendCmd(0x01);
+      usleep(2000);
+    } else { // Generic PCF8574 LCD Protocol (White/Blue)
+      auto writeNibble = [&](unsigned char n) {
+        unsigned char buf[1];
+        buf[0] = n | 0x08 | 0x04; // Backlight=1, Enable=1
+        write(i2c_fd, buf, 1);
+        usleep(1);
+        buf[0] = (n | 0x08) & ~0x04; // Enable=0
+        write(i2c_fd, buf, 1);
+        usleep(50);
+      };
+      auto sendByte = [&](unsigned char val, int mode) {
+        unsigned char hn = (val & 0xF0) | mode;
+        unsigned char ln = ((val << 4) & 0xF0) | mode;
+        writeNibble(hn);
+        writeNibble(ln);
+      };
+      usleep(50000);
+      writeNibble(0x30);
+      usleep(4500);
+      writeNibble(0x30);
+      usleep(4500);
+      writeNibble(0x30);
+      usleep(150);
+      writeNibble(0x20); // 4-bit mode
+      sendByte(0x28, 0); // 2 lines
+      sendByte(0x0C, 0); // Display on
+      sendByte(0x01, 0); // Clear
+      usleep(2000);
+    }
 
     if (has_rgb) {
       setLCDColor(255, 255, 255);
@@ -107,23 +140,49 @@ public:
     if (lcd_addr == -1)
       return;
     ioctl(i2c_fd, I2C_SLAVE, lcd_addr);
-    auto sendCmd = [&](unsigned char cmd) {
-      unsigned char buf[2] = {0x80, cmd};
-      write(i2c_fd, buf, 2);
-    };
-    auto sendData = [&](unsigned char data) {
-      unsigned char buf[2] = {0x40, data};
-      write(i2c_fd, buf, 2);
-    };
 
-    sendCmd(0x01); // Clear
-    usleep(2000);
-    sendCmd(0x80);
-    for (char c : l1.substr(0, 16))
-      sendData(c);
-    sendCmd(0xC0);
-    for (char c : l2.substr(0, 16))
-      sendData(c);
+    if (lcd_addr == 0x3e) { // Grove
+      auto sendCmd = [&](unsigned char cmd) {
+        unsigned char buf[2] = {0x80, cmd};
+        write(i2c_fd, buf, 2);
+      };
+      auto sendData = [&](unsigned char data) {
+        unsigned char buf[2] = {0x40, data};
+        write(i2c_fd, buf, 2);
+      };
+      sendCmd(0x01);
+      usleep(2000);
+      sendCmd(0x80);
+      for (char c : l1.substr(0, 16))
+        sendData(c);
+      sendCmd(0xC0);
+      for (char c : l2.substr(0, 16))
+        sendData(c);
+    } else { // Generic PCF8574
+      auto writeNibble = [&](unsigned char n) {
+        unsigned char buf[1];
+        buf[0] = n | 0x08 | 0x04;
+        write(i2c_fd, buf, 1);
+        usleep(1);
+        buf[0] = (n | 0x08) & ~0x04;
+        write(i2c_fd, buf, 1);
+        usleep(50);
+      };
+      auto sendByte = [&](unsigned char val, int mode) {
+        unsigned char hn = (val & 0xF0) | mode;
+        unsigned char ln = ((val << 4) & 0xF0) | mode;
+        writeNibble(hn);
+        writeNibble(ln);
+      };
+      sendByte(0x01, 0);
+      usleep(2000);
+      sendByte(0x80, 0);
+      for (char c : l1.substr(0, 16))
+        sendByte(c, 1);
+      sendByte(0xC0, 0);
+      for (char c : l2.substr(0, 16))
+        sendByte(c, 1);
+    }
   }
 
   void commandListener() {
