@@ -78,11 +78,13 @@ class HardwareManager:
         try:
             from smbus2 import SMBus
             self.bus = SMBus(1)
+            print("📡 I2C Bus 1 geöffnet...")
             self.scan_i2c_bus()
             self.assign_and_init()
         except Exception as e:
             self.bus = None
-            print(f"⚠️ Hardware Manager Fehler: {e}")
+            print(f"⚠️ I2C Bus nicht verfügbar (Simulation aktiv): {e}")
+            print("💡 Tipp: Läuft das Skript auf dem Pi? Ist I2C aktiviert (raspi-config)?")
 
     def scan_i2c_bus(self):
         """Scant den Bus nach angeschlossenen Geräten"""
@@ -189,6 +191,9 @@ class HardwareManager:
         print("   ✅ Fingerprint Sensor initialisiert")
 
     def write_lcd(self, line1, line2=""):
+        # Konsole-Fallback (damit du siehst, was passieren würde)
+        print(f"📟 [LCD] L1: {line1:16} | L2: {line2:16}")
+        
         if not self.bus or not self.lcd_address: return
         try:
             if self.lcd_type == "GROVE":
@@ -204,7 +209,8 @@ class HardwareManager:
                 for char in line1[:16]: self._lcd_generic_write(ord(char), mode=1)
                 self._lcd_generic_write(0xC0, mode=0) # Line 2
                 for char in line2[:16]: self._lcd_generic_write(ord(char), mode=1)
-        except: pass
+        except Exception as e:
+            print(f"⚠️ LCD Schreibfehler: {e}")
 
     def set_lcd_color(self, r, g, b):
         if not self.bus or not self.rgb_address: return
