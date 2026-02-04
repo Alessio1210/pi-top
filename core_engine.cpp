@@ -11,12 +11,14 @@
 // I2C Adressen
 #define GROVE_LCD_ADDR 0x3e
 #define GENERIC_LCD_ADDR 0x27
+#define RGB_ADDR 0x62
 
 class PiTopCore {
 private:
   int i2c_fd;
   int uart_fd;
   int lcd_addr = -1;
+  bool has_rgb = false;
   std::string current_l1, current_l2;
 
 public:
@@ -49,13 +51,16 @@ public:
 
   void scanHardware() {
     // Schneller I2C Scan
-    int test_addresses[] = {0x3e, 0x27, 0x3f, 0x5a, 0x60};
-    for (int addr : test_addresses) {
+    int addresses[] = {0x3e, 0x27, 0x3f, 0x62, 0x5a};
+    for (int addr : addresses) {
       if (ioctl(i2c_fd, I2C_SLAVE, addr) >= 0) {
         if (write(i2c_fd, NULL, 0) >= 0) {
           if (addr == 0x3e || addr == 0x27 || addr == 0x3f) {
             lcd_addr = addr;
             std::cout << "FOUND:LCD:" << std::hex << addr << std::endl;
+          } else if (addr == 0x62) {
+            has_rgb = true;
+            std::cout << "FOUND:RGB:0x62" << std::endl;
           } else if (addr == 0x5a) {
             std::cout << "FOUND:KEYPAD:0x5a" << std::endl;
           }
@@ -65,30 +70,49 @@ public:
   }
 
   void initLCD() {
+    ioctl(i2c_fd, I2C_SLAVE, lcd_addr);
     auto sendCmd = [&](unsigned char cmd) {
       unsigned char buf[2] = {0x80, cmd};
-      ioctl(i2c_fd, I2C_SLAVE, lcd_addr);
       write(i2c_fd, buf, 2);
     };
     usleep(50000);
     sendCmd(0x38); // Function set
+    usleep(50);
     sendCmd(0x0C); // Display on
+    usleep(50);
     sendCmd(0x01); // Clear
     usleep(2000);
+
+    if (has_rgb) {
+      setLCDColor(255, 255, 255);
+    }
+  }
+
+  void setLCDColor(int r, int g, int b) {
+    if (!has_rgb)
+      return;
+    ioctl(i2c_fd, I2C_SLAVE, RGB_ADDR);
+    auto sendRGB = [&](unsigned char reg, unsigned char val) {
+      unsigned char buf[2] = {reg, val};
+      write(i2c_fd, buf, 2);
+    };
+    sendRGB(0x00, 0x00);
+    sendRGB(0x08, 0xAA);
+    sendRGB(0x04, r);
+    sendRGB(0x03, g);
+    sendRGB(0x02, b);
   }
 
   void writeLCD(std::string l1, std::string l2) {
     if (lcd_addr == -1)
       return;
-
+    ioctl(i2c_fd, I2C_SLAVE, lcd_addr);
     auto sendCmd = [&](unsigned char cmd) {
       unsigned char buf[2] = {0x80, cmd};
-      ioctl(i2c_fd, I2C_SLAVE, lcd_addr);
       write(i2c_fd, buf, 2);
     };
     auto sendData = [&](unsigned char data) {
       unsigned char buf[2] = {0x40, data};
-      ioctl(i2c_fd, I2C_SLAVE, lcd_addr);
       write(i2c_fd, buf, 2);
     };
 
@@ -109,6 +133,11 @@ public:
         size_t sep = line.find('|');
         if (sep != std::string::npos) {
           writeLCD(line.substr(4, sep - 4), line.substr(sep + 1));
+        }
+      } else if (line.substr(0, 4) == "RGB:") {
+        int r, g, b;
+        if (sscanf(line.c_str(), "RGB:%d,%d,%d", &r, &g, &b) == 3) {
+          setLCDColor(r, g, b);
         }
       }
     }

@@ -76,59 +76,27 @@ def cprint(msg):
 # I2C Treiber für Hardware-Komponenten (LCD, Keypad, Fingerprint)
 class HardwareManager:
     def __init__(self):
-        self.bus = None
-        self.ser = None
         self.cpp_process = None
-        self.devices = []
-        
-        # 1. C++ Engine vorbereiten & starten
-        self.init_cpp_engine()
-        
-        # 2. pi-top Hardware Weckruf
-        # Standard I2C Adressen
-        self.ADDR_GROVE_LCD = 0x3e
-        self.ADDR_GROVE_RGB = 0x62
-        self.ADDR_GENERIC_LCD = [0x27, 0x3f]
-        self.ADDR_KEYPAD = 0x5a
-        self.ADDR_FINGERPRINT = 0x60
-        
-        # Aktive Adressen & Typen
-        self.lcd_address = None
-        self.lcd_type = "GROVE" 
-        self.rgb_address = None
-        self.keypad_address = None
-        self.fingerprint_address = None
-        
-        # State Tracking (verhindert Spam im Terminal)
         self.last_line1 = ""
         self.last_line2 = ""
-
-        # pi-top Hardware Weckruf
+        
+        # 1. C++ Core-Engine starten (übernimmt Hardware-Scanning)
+        self.init_cpp_engine()
+        
+        # 2. pi-top Power-Status (optional)
         if Pitop:
             try:
                 self.pt_device = Pitop()
-                self.plate = FoundationPlate()
-                cprint(f"🔋 pi-top System aktiv (Akku: {self.pt_device.battery.capacity}%)")
-            except Exception as e:
-                cprint(f"⚠️ pi-top Hardware konnte nicht initialisiert werden: {e}")
+                cprint(f"🔋 System-Akku: {self.pt_device.battery.capacity}%")
+            except: pass
 
-        # I2C Bus für LCD / Fingerprint
-        try:
-            from smbus2 import SMBus
-            self.bus = SMBus(1)
-            cprint("📡 I2C Bus 1 geöffnet...")
-            self.scan_i2c_bus()
-            self.assign_and_init()
-        except Exception as e:
-            self.bus = None
-            cprint(f"⚠️ I2C Bus nicht verfügbar: {e}")
     def init_cpp_engine(self):
         """Kompiliert und startet die C++ Core-Engine"""
         cpp_source = "core_engine.cpp"
         cpp_binary = "./core_engine"
         
         try:
-            # Automatisches Kompilieren
+            # Automatisches Kompilieren falls Source-Datei vorhanden
             if os.path.exists(cpp_source):
                 cprint("🛠 Kompiliere Hochleistungs-Core (C++)...")
                 subprocess.run(["clang++", "-O3", cpp_source, "-o", cpp_binary], check=True)
@@ -155,195 +123,38 @@ class HardwareManager:
             if line.startswith("KEY:"):
                 key = line.split(":")[1]
                 process_key_input(key)
-            elif line.startswith("LCD_CMD:"):
-                # C++ meldet Erfolg oder Status
-                pass
+            elif line.startswith("FOUND:"):
+                cprint(f"✨ Hardware erkannt: {line.split(':')[1]}")
             elif line == "READY":
-                cprint("✅ C++ Core Engine meldet: BEREIT")
+                cprint("✅ HOCHLEISTUNGS-CORE IST BEREIT")
+                self.write_lcd("Hallo!", "Bereit...")
 
     def write_lcd(self, line1, line2=""):
-        """Schickt den Text an die C++ Engine"""
+        """Schickt Text-Befehle an die C++ Engine"""
         if self.cpp_process:
             try:
-                # Wir schicken den Text einfach an den C++ Prozess
                 msg = f"LCD:{line1}|{line2}\n"
                 self.cpp_process.stdin.write(msg)
                 self.cpp_process.stdin.flush()
             except: pass
         
-        # Fallback Terminal-Ausgabe
+        # Lokale State-Kontrolle für Console
         if line1 != self.last_line1 or line2 != self.last_line2:
             self.last_line1, self.last_line2 = line1, line2
             print(f"\r📟 [LCD] {line1:10} | {line2:10}", flush=True)
 
-    def scan_i2c_bus(self):
-        """Scant den Bus nach angeschlossenen Geräten"""
-        if not self.bus: return
-        print("🔍 Scanne I2C-Bus nach Hardware...")
-        for address in range(0x03, 0x78):
-            try:
-                self.bus.write_quick(address)
-                self.devices.append(address)
-                print(f"   ✅ Gerät auf 0x{address:02x} gefunden")
-            except OSError:
-                pass
-        
-        if not self.devices:
-            print("   ❌ Keine I2C Geräte gefunden!")
-
-    def assign_and_init(self):
-        """Identifiziert und initialisiert gefundene Hardware"""
-        # LCD Erkennung
-        if self.ADDR_GROVE_LCD in self.devices:
-            self.lcd_address = self.ADDR_GROVE_LCD
-            self.lcd_type = "GROVE"
-            print("   📟 Grove LCD erkannt (0x3e)")
-        else:
-            for addr in self.ADDR_GENERIC_LCD:
-                if addr in self.devices:
-                    self.lcd_address = addr
-                    self.lcd_type = "GENERIC"
-                    print(f"   📟 Generisches LCD an 0x{addr:02x} erkannt")
-                    break
-        
-        if self.ADDR_GROVE_RGB in self.devices:
-            self.rgb_address = self.ADDR_GROVE_RGB
-            print("   🎨 RGB Backlight erkannt")
-            
-        if self.ADDR_KEYPAD in self.devices:
-            self.keypad_address = self.ADDR_KEYPAD
-            print("   🔢 [HARDWARE] Keypad (MPR121) auf 0x5a GEFUNDEN!", flush=True)
-        else:
-            print("   ⚠️  [HARDWARE] Keypad (0x5a) NICHT gefunden. Steck es in einen I2C-Port!", flush=True)
-            
-        if self.ADDR_FINGERPRINT in self.devices:
-            self.fingerprint_address = self.ADDR_FINGERPRINT
-            print("   ☝️ Fingerprint Sensor erkannt")
-
-        # Initialisierung (LCD immer, auch für Simulation)
-        self.init_lcd()
-        if self.keypad_address: self.init_keypad()
-        if self.fingerprint_address: self.init_fingerprint()
-
-    def init_lcd(self):
-        if not self.bus or not self.lcd_address: return
-        try:
-            if self.lcd_type == "GROVE":
-                def command(cmd): self.bus.write_byte_data(self.lcd_address, 0x80, cmd)
-                time.sleep(0.05)
-                command(0x38); time.sleep(0.005)
-                command(0x0C); time.sleep(0.005)
-                command(0x01); time.sleep(0.05)
-                command(0x06)
-                if self.rgb_address:
-                    self.bus.write_byte_data(self.rgb_address, 0x00, 0x00)
-                    self.bus.write_byte_data(self.rgb_address, 0x08, 0xAA)
-                    self.set_lcd_color(255, 255, 255)
-            else:
-                # Initialisierung für generische PCF8574 LCDs (4-bit Mode)
-                self._lcd_generic_write(0x33, mode=0) # 8-bit mode init
-                self._lcd_generic_write(0x32, mode=0) # Switch to 4-bit
-                self._lcd_generic_write(0x28, mode=0) # 2 lines, 5x8
-                self._lcd_generic_write(0x0C, mode=0) # Display on
-                self._lcd_generic_write(0x01, mode=0) # Clear
-                time.sleep(0.05)
-            
-            self.write_lcd("Hallo!", "Bereit...")
-        except Exception as e:
-            print(f"⚠️ LCD Init Fehler: {e}")
-
-    def _lcd_generic_write(self, data, mode):
-        """Hilfsfunktion für generische LCDs (PCF8574)"""
-        # mode 0 = command, 1 = data
-        # Bit 3 = Backlight, Bit 2 = Enable, Bit 1 = R/W, Bit 0 = RS
-        backlight = 0x08 
-        high_nibble = (data & 0xF0) | backlight | mode
-        low_nibble = ((data << 4) & 0xF0) | backlight | mode
-        
-        # Pulse Enable
-        self.bus.write_byte(self.lcd_address, high_nibble | 0x04)
-        self.bus.write_byte(self.lcd_address, high_nibble & ~0x04)
-        self.bus.write_byte(self.lcd_address, low_nibble | 0x04)
-        self.bus.write_byte(self.lcd_address, low_nibble & ~0x04)
-
-    def init_keypad(self):
-        if not self.bus or not self.keypad_address: return
-        try:
-            self.bus.write_byte_data(self.keypad_address, 0x80, 0x63)
-            time.sleep(0.01)
-            self.bus.write_byte_data(self.keypad_address, 0x5e, 0x00)
-            for i in range(12):
-                self.bus.write_byte_data(self.keypad_address, 0x41 + 2*i, 12)
-                self.bus.write_byte_data(self.keypad_address, 0x42 + 2*i, 6)
-            self.bus.write_byte_data(self.keypad_address, 0x5e, 0x0c)
-        except: pass
-
-    def init_fingerprint(self):
-        if not self.bus or not self.fingerprint_address: return
-        print("   ✅ Fingerprint Sensor initialisiert")
-
-    def write_lcd(self, line1, line2=""):
-        if line1 == self.last_line1 and line2 == self.last_line2:
-            return
-        self.last_line1, self.last_line2 = line1, line2
-
-        # \r erzwingt den Cursor an den linken Rand (fixiert das Treppen-Styling)
-        print(f"\r📟 [LCD] {line1:10} | {line2:10}", flush=True)
-        
-        if not self.bus or not self.lcd_address: return
-        try:
-            if self.lcd_type == "GROVE":
-                self.bus.write_byte_data(self.lcd_address, 0x80, 0x01)
-                time.sleep(0.01)
-                self.bus.write_byte_data(self.lcd_address, 0x80, 0x80)
-                for char in line1[:16]: self.bus.write_byte_data(self.lcd_address, 0x40, ord(char))
-                self.bus.write_byte_data(self.lcd_address, 0x80, 0xc0)
-                for char in line2[:16]: self.bus.write_byte_data(self.lcd_address, 0x40, ord(char))
-            else:
-                self._lcd_generic_write(0x01, mode=0) # Clear
-                self._lcd_generic_write(0x80, mode=0) # Line 1
-                for char in line1[:16]: self._lcd_generic_write(ord(char), mode=1)
-                self._lcd_generic_write(0xC0, mode=0) # Line 2
-                for char in line2[:16]: self._lcd_generic_write(ord(char), mode=1)
-        except Exception as e:
-            print(f"⚠️ LCD Schreibfehler: {e}")
-
     def set_lcd_color(self, r, g, b):
-        if not self.bus or not self.rgb_address: return
-        try:
-            self.bus.write_byte_data(self.rgb_address, 0x04, r)
-            self.bus.write_byte_data(self.rgb_address, 0x03, g)
-            self.bus.write_byte_data(self.rgb_address, 0x02, b)
-        except: pass
-
-    def read_keypad(self):
-        """
-        Liest das UART-Keypad (ATtiny1616 Protocol)
-        """
-        if not self.ser: return None
-        try:
-            if self.ser.in_waiting > 0:
-                data = self.ser.read(1)[0]
-                # Mapping laut Seeed Studio Wiki
-                mapping = {
-                    0xE1: "1", 0xE2: "2", 0xE3: "3",
-                    0xE4: "4", 0xE5: "5", 0xE6: "6",
-                    0xE7: "7", 0xE8: "8", 0xE9: "9",
-                    0xEB: "0", 0xEA: "*", 0xEC: "#"
-                }
-                key = mapping.get(data)
-                if key:
-                    cprint(f"🎯 UART Key erkannt: {key}")
-                return key
-        except: pass
-        return None
+        """Schickt Farbbefehle an die C++ Engine"""
+        if self.cpp_process:
+            try:
+                msg = f"RGB:{r},{g},{b}\n"
+                self.cpp_process.stdin.write(msg)
+                self.cpp_process.stdin.flush()
+            except: pass
 
     def read_fingerprint(self):
-        if not self.bus or not self.fingerprint_address: return None
-        try:
-            status = self.bus.read_byte_data(self.fingerprint_address, 0x00)
-            return None
-        except: return None
+        # Fingerprint bleibt vorerst deaktiviert, bis er in C++ ist
+        return None
 
 hw = HardwareManager()
 hardware_pin_buffer = ""
