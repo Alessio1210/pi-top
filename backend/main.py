@@ -820,17 +820,19 @@ def ai_worker_thread():
             elif has_unknown:
                 unknown_face_counter += 1
                 hw.write_lcd("Unbekannt", "Wer bist du?")
+                if access_state == "IDLE":
+                    set_ampel("aus")
                 if unknown_face_counter >= UNKNOWN_THRESHOLD:
                     trigger_alert(frame_to_process)
                     unknown_face_counter = 0
             else:
-                 # Kein Gesicht -> Kurze Verzögerung bevor "Bereit" kommt (Smoothing)
-                 if unknown_face_counter > 0:
-                     unknown_face_counter -= 1
-                 
-                 # Nur wenn seit 10 Frames (ca 1 Sek) nichts gesehen wurde, auf Bereit zurück
-                 if unknown_face_counter == 0:
-                     hw.write_lcd("Hallo!", "Bereit...")
+                # Kein Gesicht → Ampel aus, Bereit
+                if access_state == "IDLE":
+                    set_ampel("aus")
+                if unknown_face_counter > 0:
+                    unknown_face_counter -= 1
+                if unknown_face_counter == 0:
+                    hw.write_lcd("Hallo!", "Bereit...")
 
         except Exception as e:
             print(f"⚠️ AI Thread Fehler: {e}")

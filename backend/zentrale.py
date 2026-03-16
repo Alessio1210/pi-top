@@ -30,13 +30,13 @@ request_lock = threading.Lock()
 has_hw = False
 try:
     from pitop.pma import Button, LED
-    btn_accept = Button("D4")  # Grüner Button = Annehmen
-    btn_reject = Button("D7")  # Roter Button  = Ablehnen
-    led_status = LED("D2")     # Status LED
+    btn_accept = Button("D0")  # Grüner Button = Annehmen  (D0)
+    btn_reject = Button("D3")  # Roter Button  = Ablehnen  (D3)
+    led_status = LED("D2")     # Status LED                (D2)
 
     led_status.on()
     has_hw = True
-    print("✅ Hardware Buttons initialisiert (D4=Grün/Accept, D7=Rot/Reject)")
+    print("✅ Hardware Buttons initialisiert (D0=Grün/Accept, D3=Rot/Reject)")
 except Exception as e:
     print(f"⚠️ Hardware Fehler (Taste/LED nicht gefunden). Simuliere Zentrale im Terminal. ({e})")
 
