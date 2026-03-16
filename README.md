@@ -16,7 +16,11 @@ Ein Flask-basierter Webserver für Live-Streaming von USB-Kameras auf dem Pi-Top
 
 ### Angeschlossene Komponenten:
 - **USB-Kamera** (schwarz) → USB-Port
-- **Mikrofon** → Port D0 (optional, noch nicht im Server integriert)
+- **LCD-Display**
+- **Ampel-LED**
+- **Zwei-Buttons**
+- **Keypad**
+
 
 ## 🚀 Installation auf dem Pi-Top
 
