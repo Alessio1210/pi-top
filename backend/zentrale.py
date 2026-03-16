@@ -27,42 +27,18 @@ current_request = None
 request_lock = threading.Lock()
 
 # Hardware Setup für Zentrale
-# Port-Belegung:
-#   D0 = Grüner Button Schalter  (input)
-#   D1 = Grüner Button LED       (output)
-#   D3 = Roter Button Schalter   (input)
-#   D2 = Roter Button LED        (output)
+#   D0 = Grüner Button (Annehmen)
+#   D3 = Roter Button  (Ablehnen)
 has_hw = False
 btn_accept = btn_reject = None
-led_green_btn = led_red_btn = None
 try:
-    from pitop.pma import Button, LED
-    btn_accept   = Button("D0")
-    led_green_btn = LED("D1")
-    btn_reject   = Button("D3")
-    led_red_btn  = LED("D2")
-
-    # Beim Start beide Button-LEDs kurz aufleuchten lassen (Selbsttest)
-    led_green_btn.on(); led_red_btn.on()
-    time.sleep(0.5)
-    led_green_btn.off(); led_red_btn.off()
-
+    from pitop.pma import Button
+    btn_accept = Button("D0")
+    btn_reject = Button("D3")
     has_hw = True
-    print("✅ Hardware initialisiert — D0/D1=Grün, D3/D2=Rot")
+    print("✅ Buttons initialisiert (D0=Annehmen, D3=Ablehnen)")
 except Exception as e:
     print(f"⚠️ Hardware nicht gefunden — Terminal-Simulation aktiv. ({e})")
-
-def set_button_leds(state: str):
-    """'an' = beide leuchten, 'gruen' = nur grün, 'rot' = nur rot, 'aus' = beide aus"""
-    if not led_green_btn: return
-    if state == "an":
-        led_green_btn.on();  led_red_btn.on()
-    elif state == "gruen":
-        led_green_btn.on();  led_red_btn.off()
-    elif state == "rot":
-        led_green_btn.off(); led_red_btn.on()
-    else:
-        led_green_btn.off(); led_red_btn.off()
 
 def log_to_db(req_data):
     """Loggt den Zugriff in die Datenbank"""
@@ -112,23 +88,16 @@ def hardware_button_loop():
     while True:
         with request_lock:
             if current_request and current_request['status'] == 'pending':
-                set_button_leds("an")   # beide Button-LEDs an → Wärter soll reagieren
                 if btn_accept.is_pressed:
                     current_request['status'] = 'accepted'
                     print(f"\n✅ Zentrale (D0 Grün): Zugriff ERLAUBT für {current_request['name']}")
                     log_to_db(current_request)
-                    set_button_leds("gruen")
-                    time.sleep(1)
-                    set_button_leds("aus")
+                    time.sleep(1)   # Debounce
                 elif btn_reject.is_pressed:
                     current_request['status'] = 'rejected'
                     print(f"\n❌ Zentrale (D3 Rot): Zugriff ABGELEHNT für {current_request['name']}")
                     log_to_db(current_request)
-                    set_button_leds("rot")
-                    time.sleep(1)
-                    set_button_leds("aus")
-            else:
-                set_button_leds("aus")  # kein Request → LEDs aus
+                    time.sleep(1)   # Debounce
         time.sleep(0.1)
 
 @app.route('/api/request_access', methods=['POST'])

@@ -87,25 +87,32 @@ except Exception as e:
     led_red = None
     print(f"⚠️ Hardware Fehler: {e}")
 
-# Ampel — direkt an GPIO (GND, 26=Rot, 19=Gelb, 13=Grün)
+# Ampel — direkt an GPIO via RPi.GPIO (BCM: 26=Rot, 19=Gelb, 13=Grün)
+AMPEL_ROT   = 26
+AMPEL_GELB  = 19
+AMPEL_GRUEN = 13
+ampel_ok = False
 try:
-    from gpiozero import LED as GPIO_LED
-    ampel_rot   = GPIO_LED(26)
-    ampel_gelb  = GPIO_LED(19)
-    ampel_gruen = GPIO_LED(13)
-    ampel_rot.off(); ampel_gelb.off(); ampel_gruen.off()
-    print("🚦 Ampel initialisiert (Rot: GPIO26, Gelb: GPIO19, Grün: GPIO13)")
+    import RPi.GPIO as GPIO
+    GPIO.setwarnings(False)
+    GPIO.setmode(GPIO.BCM)
+    GPIO.setup(AMPEL_ROT,   GPIO.OUT, initial=GPIO.LOW)
+    GPIO.setup(AMPEL_GELB,  GPIO.OUT, initial=GPIO.LOW)
+    GPIO.setup(AMPEL_GRUEN, GPIO.OUT, initial=GPIO.LOW)
+    ampel_ok = True
+    print(f"🚦 Ampel initialisiert (BCM Rot:{AMPEL_ROT}, Gelb:{AMPEL_GELB}, Grün:{AMPEL_GRUEN})")
 except Exception as e:
-    ampel_rot = ampel_gelb = ampel_gruen = None
-    print(f"⚠️ Ampel nicht gefunden: {e}")
+    print(f"⚠️ Ampel nicht verfügbar: {e}")
 
 def set_ampel(color):
     """Setzt die Ampelfarbe: 'rot', 'gelb', 'gruen' oder 'aus'"""
-    if not ampel_rot: return
-    ampel_rot.off(); ampel_gelb.off(); ampel_gruen.off()
-    if   color == "rot":   ampel_rot.on()
-    elif color == "gelb":  ampel_gelb.on()
-    elif color == "gruen": ampel_gruen.on()
+    if not ampel_ok: return
+    GPIO.output(AMPEL_ROT,   GPIO.LOW)
+    GPIO.output(AMPEL_GELB,  GPIO.LOW)
+    GPIO.output(AMPEL_GRUEN, GPIO.LOW)
+    if   color == "rot":   GPIO.output(AMPEL_ROT,   GPIO.HIGH)
+    elif color == "gelb":  GPIO.output(AMPEL_GELB,  GPIO.HIGH)
+    elif color == "gruen": GPIO.output(AMPEL_GRUEN, GPIO.HIGH)
 
 # Joystick (I2C) für digitalen Zoom
 zoom_level = 1.0   # 1.0 = kein Zoom, max 3.0
