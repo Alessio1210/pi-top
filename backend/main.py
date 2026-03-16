@@ -187,27 +187,27 @@ def handle_access_flow(person_id, name):
                     status = status_res.json().get("status")
                     if status == "accepted":
                         print(f"✅ Zentrale hat Zugriff GEWAEHRT fuer {name}")
-                        hw.write_lcd("ZUTRITT ERLAUBT", "Bitte eintreten")
+                        hw.write_lcd("ANGENOMMEN", name[:16])
                         set_led_color("green")
-                        set_ampel("gruen")  # 🟢 Zugang gewährt
+                        set_ampel("gruen")
                         if buzzer:
                             buzzer.on(); time.sleep(0.2); buzzer.off()
                         time.sleep(5)
                         break
                     elif status == "rejected":
                         print(f"❌ Zentrale hat Zugriff ABGELEHNT fuer {name}")
-                        hw.write_lcd("ZUTRITT VERB.", "Abgelehnt")
+                        hw.write_lcd("ABGELEHNT", name[:16])
                         set_led_color("red")
-                        set_ampel("rot")    # 🔴 Zugang verweigert
+                        set_ampel("rot")
                         if buzzer:
                             buzzer.on(); time.sleep(0.6); buzzer.off()
                         time.sleep(3)
                         break
                     elif status == "timeout":
                         print("⏰ Timeout bei der Zentrale.")
-                        hw.write_lcd("TIMEOUT", "Keine Antwort")
+                        hw.write_lcd("ABGELEHNT", "Timeout")
                         set_led_color("red")
-                        set_ampel("rot")    # 🔴 Timeout = kein Zugang
+                        set_ampel("rot")
                         time.sleep(3)
                         break
 
@@ -501,6 +501,10 @@ stats = {
 # Globale Variable für aktuellen Frame (für Snapshots)
 current_frame = None
 
+# Stabilitätspuffer — verhindert Flackern zwischen Name und "Unbekannt"
+STABLE_DURATION = 4.0   # Sekunden, wie lange ein erkanntes Gesicht "eingefroren" bleibt
+stable_face = {"name": None, "id": None, "expires_at": 0.0}
+
 # Temporärer Speicher für Enrollment
 enrollment_cache = {}
 
@@ -763,24 +767,40 @@ def ai_worker_thread():
                 new_results.append(((top, right, bottom, left), (name, label_text)))
                 current_face_names_for_alert.append(name)
             
+            # Stabilitätspuffer befüllen
+            now_t = time.time()
+            for (loc, info) in new_results:
+                if info[0] != "Unbekannt":
+                    stable_face["name"] = info[0]
+                    stable_face["id"]   = known_face_ids[known_face_names.index(info[0])]
+                    stable_face["expires_at"] = now_t + STABLE_DURATION
+                    break
+
+            # Falls kein Gesicht im Frame aber Puffer noch aktiv → letzten Namen einfrieren
+            if not any(n != "Unbekannt" for n in current_face_names_for_alert):
+                if now_t < stable_face["expires_at"] and stable_face["name"]:
+                    # Ergebnis aus Puffer wiederherstellen — Position aus letztem echten Frame
+                    current_face_names_for_alert = [stable_face["name"]]
+
             # Ergebnisse update
             with ai_results_lock:
                 ai_results = new_results
-                
-                # Update UI Status (nur wenn ein Match da war)
+
                 if current_face_names_for_alert:
-                    # Nimm das erste Gesicht für den PIN Pad (einfachste Logik)
                     for (loc, info) in new_results:
                         if info[0] != "Unbekannt":
                             last_detected_person["id"] = known_face_ids[known_face_names.index(info[0])]
                             last_detected_person["name"] = info[0]
                             last_detected_person["timestamp"] = time.time()
                             break
+                    # Puffer als Fallback für last_detected_person
+                    if not last_detected_person["name"] and stable_face["name"] and now_t < stable_face["expires_at"]:
+                        last_detected_person["name"] = stable_face["name"]
+                        last_detected_person["id"]   = stable_face["id"]
 
-                
             # === Alarm Logik & LCD Update ===
-            has_known = any(n != "Unbekannt" for n in current_face_names_for_alert)
-            has_unknown = any(n == "Unbekannt" for n in current_face_names_for_alert)
+            has_known   = any(n != "Unbekannt" for n in current_face_names_for_alert)
+            has_unknown = any(n == "Unbekannt" for n in current_face_names_for_alert) and not has_known
             
             if has_known:
                 unknown_face_counter = 0
