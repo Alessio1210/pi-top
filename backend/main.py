@@ -87,6 +87,74 @@ except Exception as e:
     led_red = None
     print(f"⚠️ Hardware Fehler: {e}")
 
+# Ampel — direkt an GPIO (GND, 26=Rot, 19=Gelb, 13=Grün)
+try:
+    from gpiozero import LED as GPIO_LED
+    ampel_rot   = GPIO_LED(26)
+    ampel_gelb  = GPIO_LED(19)
+    ampel_gruen = GPIO_LED(13)
+    ampel_rot.off(); ampel_gelb.off(); ampel_gruen.off()
+    print("🚦 Ampel initialisiert (Rot: GPIO26, Gelb: GPIO19, Grün: GPIO13)")
+except Exception as e:
+    ampel_rot = ampel_gelb = ampel_gruen = None
+    print(f"⚠️ Ampel nicht gefunden: {e}")
+
+def set_ampel(color):
+    """Setzt die Ampelfarbe: 'rot', 'gelb', 'gruen' oder 'aus'"""
+    if not ampel_rot: return
+    ampel_rot.off(); ampel_gelb.off(); ampel_gruen.off()
+    if   color == "rot":   ampel_rot.on()
+    elif color == "gelb":  ampel_gelb.on()
+    elif color == "gruen": ampel_gruen.on()
+
+# Joystick (I2C) für digitalen Zoom
+zoom_level = 1.0   # 1.0 = kein Zoom, max 3.0
+zoom_lock  = threading.Lock()
+
+try:
+    from pitop.pma import Joystick as PitopJoystick
+    joystick = PitopJoystick("I2C")
+    print("🕹️  Joystick initialisiert (I2C)")
+except Exception:
+    try:
+        import smbus2
+        _jbus = smbus2.SMBus(1)
+        _jbus.read_byte(0x20)   # SparkFun Qwiic Joystick default-Adresse
+        joystick = _jbus
+        print("🕹️  Joystick initialisiert (I2C smbus 0x20)")
+    except Exception as e:
+        joystick = None
+        print(f"⚠️ Joystick nicht gefunden: {e}")
+
+def joystick_zoom_loop():
+    """Liest Joystick und passt digitalen Zoom an"""
+    global zoom_level
+    while True:
+        try:
+            if joystick is None:
+                time.sleep(1); continue
+
+            # pitop Joystick
+            if hasattr(joystick, 'vertical'):
+                v = joystick.vertical   # -1 … +1
+                if   v > 0.4:  delta =  0.05
+                elif v < -0.4: delta = -0.05
+                else:          delta = 0
+            else:
+                # smbus: register 0x03 = vertical (0–255, 128 = Mitte)
+                raw = joystick.read_byte_data(0x20, 0x03)
+                v   = (raw - 128) / 128.0
+                if   v > 0.4:  delta =  0.05
+                elif v < -0.4: delta = -0.05
+                else:          delta = 0
+
+            if delta != 0:
+                with zoom_lock:
+                    zoom_level = max(1.0, min(3.0, zoom_level + delta))
+        except Exception:
+            pass
+        time.sleep(0.1)
+
 # Hilfsfunktion für saubere Terminal-Ausgabe
 def cprint(msg):
     print(f"\r{msg}", flush=True)
@@ -104,14 +172,14 @@ def set_led_color(color):
 
 def handle_access_flow(person_id, name):
     global access_state, access_cooldown
-    
+
     print(f"\n📡 Sende Zugriffsanfrage fuer {name} an die Zentrale...")
     hw.write_lcd("Bitte warten", "Zentrale prueft")
-    
+    set_ampel("gelb")   # 🟡 Gesicht erkannt — warte auf Entscheidung
+
     try:
         res = requests.post(f"{ZENTRALE_URL}/api/request_access", json={"person_id": person_id, "name": name}, timeout=3)
         if res.status_code == 200:
-            # Polling for max 12 seconds
             for _ in range(12):
                 time.sleep(1)
                 status_res = requests.get(f"{ZENTRALE_URL}/api/access_status", timeout=2)
@@ -121,7 +189,8 @@ def handle_access_flow(person_id, name):
                         print(f"✅ Zentrale hat Zugriff GEWAEHRT fuer {name}")
                         hw.write_lcd("ZUTRITT ERLAUBT", "Bitte eintreten")
                         set_led_color("green")
-                        if buzzer: 
+                        set_ampel("gruen")  # 🟢 Zugang gewährt
+                        if buzzer:
                             buzzer.on(); time.sleep(0.2); buzzer.off()
                         time.sleep(5)
                         break
@@ -129,6 +198,7 @@ def handle_access_flow(person_id, name):
                         print(f"❌ Zentrale hat Zugriff ABGELEHNT fuer {name}")
                         hw.write_lcd("ZUTRITT VERB.", "Abgelehnt")
                         set_led_color("red")
+                        set_ampel("rot")    # 🔴 Zugang verweigert
                         if buzzer:
                             buzzer.on(); time.sleep(0.6); buzzer.off()
                         time.sleep(3)
@@ -137,20 +207,24 @@ def handle_access_flow(person_id, name):
                         print("⏰ Timeout bei der Zentrale.")
                         hw.write_lcd("TIMEOUT", "Keine Antwort")
                         set_led_color("red")
+                        set_ampel("rot")    # 🔴 Timeout = kein Zugang
                         time.sleep(3)
                         break
-                        
-            # Zuruecksetzen
+
+            # Zurücksetzen
             set_led_color("off")
+            set_ampel("aus")
             hw.write_lcd("Bereit", "Warte auf Gesicht")
     except Exception as e:
         print(f"⚠️ Fehler bei Verbindung zur Zentrale: {e}")
         hw.write_lcd("NETZWERKFEHLER", "Zentrale offline")
         set_led_color("red")
+        set_ampel("rot")
         time.sleep(2)
         set_led_color("off")
+        set_ampel("aus")
     finally:
-        access_cooldown = time.time() + 5  # 5s Cooldown vor neuem Request
+        access_cooldown = time.time() + 5
         access_state = "IDLE"
 
 # hardware_pin_buffer etc.
@@ -872,8 +946,17 @@ def generate_frames():
                 cv2.rectangle(frame, (left, top - th - 10), (left + tw + 10, top), color, -1)
                 cv2.putText(frame, label_text, (left + 5, top - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2)
             
-            # 4. Kodieren & Senden (High Speed)
-            ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 75]) # 75% Quality für Speed
+            # 4. Digitaler Zoom (Joystick)
+            with zoom_lock:
+                z = zoom_level
+            if z > 1.0:
+                h, w = frame.shape[:2]
+                crop_h, crop_w = int(h / z), int(w / z)
+                y0, x0 = (h - crop_h) // 2, (w - crop_w) // 2
+                frame = cv2.resize(frame[y0:y0+crop_h, x0:x0+crop_w], (w, h))
+
+            # 5. Kodieren & Senden (High Speed)
+            ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
             
             if ret:
                 yield (b'--frame\r\n'
@@ -1176,6 +1259,8 @@ def main():
     # 🚀 Starte Hardware & Simulations Threads
     hw_thread = threading.Thread(target=physical_hardware_loop, daemon=True)
     hw_thread.start()
+
+    threading.Thread(target=joystick_zoom_loop, daemon=True).start()
     
     # PIN-Simulation deaktiviert (blockiert Terminal via tty.setraw)
     # sim_thread = threading.Thread(target=console_keypad_simulation, daemon=True)
