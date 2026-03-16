@@ -1,5 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
 import './index.css'
+
+// Dynamisch — funktioniert egal von welchem Gerät aus zugegriffen wird
+const BACKEND = `http://${window.location.hostname}:8000`
 // App.css intentionally not imported
 
 interface Person {
@@ -46,7 +49,7 @@ export default function App() {
   const now                     = useClock()
 
   useEffect(() => {
-    const evtSource = new EventSource('http://localhost:8000/api/events')
+    const evtSource = new EventSource('${BACKEND}/api/events')
 
     evtSource.onmessage = (event) => {
       try {
@@ -222,7 +225,7 @@ export default function App() {
             {connected ? (
               <>
                 <img
-                  src="http://localhost:8000/video_feed"
+                  src="${BACKEND}/video_feed"
                   alt="Kamera Stream"
                 />
                 <div className="camera-overlay">

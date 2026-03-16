@@ -7,8 +7,8 @@ from dotenv import load_dotenv
 from supabase import create_client, Client
 from flask_cors import CORS
 
-# Load environment variables
-load_dotenv()
+# Load environment variables — search from project root (one level up from backend/)
+load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
 app = Flask(__name__)
 CORS(app)
