@@ -49,7 +49,7 @@ export default function App() {
   const now                     = useClock()
 
   useEffect(() => {
-    const evtSource = new EventSource('${BACKEND}/api/events')
+    const evtSource = new EventSource(`${BACKEND}/api/events`)
 
     evtSource.onmessage = (event) => {
       try {
@@ -225,7 +225,7 @@ export default function App() {
             {connected ? (
               <>
                 <img
-                  src="${BACKEND}/video_feed"
+                  src={`${BACKEND}/video_feed`}
                   alt="Kamera Stream"
                 />
                 <div className="camera-overlay">
