@@ -1177,8 +1177,9 @@ def main():
     hw_thread = threading.Thread(target=physical_hardware_loop, daemon=True)
     hw_thread.start()
     
-    sim_thread = threading.Thread(target=console_keypad_simulation, daemon=True)
-    sim_thread.start()
+    # PIN-Simulation deaktiviert (blockiert Terminal via tty.setraw)
+    # sim_thread = threading.Thread(target=console_keypad_simulation, daemon=True)
+    # sim_thread.start()
     
     print("\r\n🌐 Server-URLs:")
     print(f"\r   Lokal:        http://localhost:{SERVER_PORT}")
