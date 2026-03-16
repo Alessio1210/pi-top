@@ -41,7 +41,12 @@ SERVER_PORT = 8000
 # Supabase Client
 SUPABASE_URL = os.getenv('SUPABASE_URL')
 SUPABASE_KEY = os.getenv('SUPABASE_KEY')
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+try:
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    print("✅ Supabase verbunden")
+except Exception as e:
+    print(f"⚠️ Supabase Init Fehler: {e} — läuft ohne Datenbank")
+    supabase = None
 
 # Telegram & Discord Konfiguration
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
@@ -430,9 +435,13 @@ def load_known_faces():
     Lädt alle bekannten Gesichter aus Supabase
     """
     global known_face_encodings, known_face_names, known_face_ids
-    
+
+    if not supabase:
+        print("⚠️ Supabase nicht verfügbar — keine Gesichter geladen")
+        return
+
     print("\n👤 Lade bekannte Gesichter aus Supabase...")
-    
+
     try:
         # Hole alle Personen aus der Datenbank
         response = supabase.table('persons').select('*').execute()
@@ -465,7 +474,10 @@ def save_detection(person_id, person_name, confidence):
     Speichert eine Erkennung in Supabase (mit Cooldown)
     """
     global last_detection_time, stats
-    
+
+    if not supabase:
+        return
+
     # Cooldown Check
     now = datetime.now()
     last_time = last_detection_time.get(person_id)
@@ -503,7 +515,10 @@ def cleanup_old_detections():
     Löscht Detections älter als 30 Tage
     """
     global stats
-    
+
+    if not supabase:
+        return
+
     # Nur einmal pro Tag ausführen
     if (datetime.now() - stats['last_cleanup']).days < 1:
         return
