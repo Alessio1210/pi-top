@@ -26,8 +26,8 @@ import subprocess
 from supabase import create_client, Client
 from dotenv import load_dotenv
 
-# Load environment variables
-load_dotenv()
+# Load environment variables — relativ zur Datei, egal von wo gestartet
+load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
