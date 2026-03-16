@@ -27,18 +27,42 @@ current_request = None
 request_lock = threading.Lock()
 
 # Hardware Setup für Zentrale
+# Port-Belegung:
+#   D0 = Grüner Button Schalter  (input)
+#   D1 = Grüner Button LED       (output)
+#   D3 = Roter Button Schalter   (input)
+#   D2 = Roter Button LED        (output)
 has_hw = False
+btn_accept = btn_reject = None
+led_green_btn = led_red_btn = None
 try:
     from pitop.pma import Button, LED
-    btn_accept = Button("D0")  # Grüner Button = Annehmen  (D0)
-    btn_reject = Button("D3")  # Roter Button  = Ablehnen  (D3)
-    led_status = LED("D2")     # Status LED                (D2)
+    btn_accept   = Button("D0")
+    led_green_btn = LED("D1")
+    btn_reject   = Button("D3")
+    led_red_btn  = LED("D2")
 
-    led_status.on()
+    # Beim Start beide Button-LEDs kurz aufleuchten lassen (Selbsttest)
+    led_green_btn.on(); led_red_btn.on()
+    time.sleep(0.5)
+    led_green_btn.off(); led_red_btn.off()
+
     has_hw = True
-    print("✅ Hardware Buttons initialisiert (D0=Grün/Accept, D3=Rot/Reject)")
+    print("✅ Hardware initialisiert — D0/D1=Grün, D3/D2=Rot")
 except Exception as e:
-    print(f"⚠️ Hardware Fehler (Taste/LED nicht gefunden). Simuliere Zentrale im Terminal. ({e})")
+    print(f"⚠️ Hardware nicht gefunden — Terminal-Simulation aktiv. ({e})")
+
+def set_button_leds(state: str):
+    """'an' = beide leuchten, 'gruen' = nur grün, 'rot' = nur rot, 'aus' = beide aus"""
+    if not led_green_btn: return
+    if state == "an":
+        led_green_btn.on();  led_red_btn.on()
+    elif state == "gruen":
+        led_green_btn.on();  led_red_btn.off()
+    elif state == "rot":
+        led_green_btn.off(); led_red_btn.on()
+    else:
+        led_green_btn.off(); led_red_btn.off()
 
 def log_to_db(req_data):
     """Loggt den Zugriff in die Datenbank"""
@@ -88,19 +112,23 @@ def hardware_button_loop():
     while True:
         with request_lock:
             if current_request and current_request['status'] == 'pending':
+                set_button_leds("an")   # beide Button-LEDs an → Wärter soll reagieren
                 if btn_accept.is_pressed:
                     current_request['status'] = 'accepted'
-                    print(f"\n✅ Zentrale (Taste D0): Zugriff ERLAUBT für {current_request['name']}")
+                    print(f"\n✅ Zentrale (D0 Grün): Zugriff ERLAUBT für {current_request['name']}")
                     log_to_db(current_request)
-                    if led_status: led_status.off(); time.sleep(0.2); led_status.on()
-                    time.sleep(1) # Debounce
+                    set_button_leds("gruen")
+                    time.sleep(1)
+                    set_button_leds("aus")
                 elif btn_reject.is_pressed:
                     current_request['status'] = 'rejected'
-                    print(f"\n❌ Zentrale (Taste D1): Zugriff ABGELEHNT für {current_request['name']}")
+                    print(f"\n❌ Zentrale (D3 Rot): Zugriff ABGELEHNT für {current_request['name']}")
                     log_to_db(current_request)
-                    for _ in range(3): # Blinken
-                        if led_status: led_status.off(); time.sleep(0.1); led_status.on(); time.sleep(0.1)
-                    time.sleep(1) # Debounce
+                    set_button_leds("rot")
+                    time.sleep(1)
+                    set_button_leds("aus")
+            else:
+                set_button_leds("aus")  # kein Request → LEDs aus
         time.sleep(0.1)
 
 @app.route('/api/request_access', methods=['POST'])
@@ -119,13 +147,9 @@ def handle_access_request():
         }
     
     print(f"\n🔔 NEUE ZUGRIFFSANFRAGE: {data.get('name')} (ID: {data.get('person_id')})")
-    print("   -> Warte auf Bestätigung durch Operator (10 Sekunden Timeout)....")
-    
-    # Schnelles Blinken der Status-LED, um Anfrage zu signalisieren
-    if has_hw:
-        threading.Thread(target=lambda: [led_status.off() if i%2==0 else led_status.on() for i in range(20) for _ in [time.sleep(0.1)]], daemon=True).start()
+    print("   -> Warte auf Bestätigung (D0=Annehmen, D3=Ablehnen, 10s Timeout)")
 
-    log_to_db(current_request) # Initial als pending loggen
+    log_to_db(current_request)
     return jsonify({"success": True, "req_id": current_request["req_id"]})
 
 @app.route('/api/access_status', methods=['GET'])
