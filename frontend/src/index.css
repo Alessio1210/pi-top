@@ -754,6 +754,70 @@ body::after {
   text-transform: uppercase;
 }
 
+/* ─── TOAST ───────────────────────────────────────────── */
+.toast {
+  position: fixed;
+  top: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 99999;
+  padding: 12px 28px;
+  font-family: var(--heading);
+  font-size: 13px;
+  letter-spacing: 3px;
+  border: 1px solid;
+  animation: toast-in 0.15s ease, toast-out 0.3s ease 1.7s forwards;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.toast-ok {
+  background: rgba(39, 174, 96, 0.15);
+  border-color: var(--green);
+  color: var(--green);
+  box-shadow: 0 0 20px rgba(39,174,96,0.3);
+}
+.toast-err {
+  background: rgba(192, 57, 43, 0.15);
+  border-color: var(--red);
+  color: var(--red);
+  box-shadow: 0 0 20px rgba(192,57,43,0.3);
+}
+@keyframes toast-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(-8px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+@keyframes toast-out {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+
+/* ─── ENROLL BUTTON ───────────────────────────────────── */
+.enroll-btn {
+  width: 100%;
+  padding: 10px;
+  background: transparent;
+  border: 1px solid var(--border-amber);
+  color: var(--amber);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 2px;
+  cursor: pointer;
+  transition: background 0.15s, box-shadow 0.15s;
+  text-transform: uppercase;
+}
+.enroll-btn:hover:not(:disabled) {
+  background: var(--amber-glow);
+  box-shadow: 0 0 10px rgba(232,160,32,0.2);
+}
+.enroll-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.enroll-btn.enrolling {
+  color: var(--text-mid);
+  border-color: var(--border);
+}
+
 /* ─── ANIMATIONS ─────────────────────────────────────── */
 @keyframes pulse-dot {
   0%, 100% { opacity: 1; }

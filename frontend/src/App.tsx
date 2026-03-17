@@ -47,8 +47,17 @@ export default function App() {
   const [connected, setConnected] = useState(false)
   const [log, setLog]           = useState<LogEntry[]>([])
   const [doorStatus, setDoorStatus] = useState<'closed' | 'checking' | 'open' | 'denied'>('closed')
-const logIdRef                = useRef(0)
+  const [toast, setToast]       = useState<{ msg: string; type: 'ok' | 'err' } | null>(null)
+  const [enrolling, setEnrolling] = useState(false)
+  const logIdRef                = useRef(0)
+  const toastTimer              = useRef<ReturnType<typeof setTimeout> | null>(null)
   const now                     = useClock()
+
+  function showToast(msg: string, type: 'ok' | 'err') {
+    setToast({ msg, type })
+    if (toastTimer.current) clearTimeout(toastTimer.current)
+    toastTimer.current = setTimeout(() => setToast(null), 2000)
+  }
 
   useEffect(() => {
     const evtSource = new EventSource(`${BACKEND}/api/events`)
@@ -79,7 +88,11 @@ const logIdRef                = useRef(0)
             total_persons:    data.total_persons    ?? 0,
             detections_today: data.detections_today ?? 0,
           })
-          if (data.door_status) setDoorStatus(data.door_status)
+          if (data.door_status && data.door_status !== doorStatus) {
+            setDoorStatus(data.door_status)
+            if (data.door_status === 'open')   showToast('ZUGANG GEWÄHRT', 'ok')
+            if (data.door_status === 'denied') showToast('ZUGANG VERWEIGERT', 'err')
+          }
         }
       } catch (err) {
         console.error('Failed to parse event data', err)
@@ -92,8 +105,27 @@ const logIdRef                = useRef(0)
 
   const threatLevel = person ? 3 : connected ? 1 : 2
 
+  async function handleEnroll() {
+    setEnrolling(true)
+    try {
+      await fetch(`${BACKEND}/api/enroll_unknown`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+      showToast('ENROLLMENT GESTARTET', 'ok')
+    } catch {
+      showToast('VERBINDUNGSFEHLER', 'err')
+    } finally {
+      setEnrolling(false)
+    }
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
+
+      {/* ── TOAST ── */}
+      {toast && (
+        <div className={`toast toast-${toast.type}`}>
+          {toast.type === 'ok' ? '■' : '◆'} {toast.msg}
+        </div>
+      )}
 
       {/* ── HEADER ── */}
       <header className="header">
@@ -360,6 +392,20 @@ const logIdRef                = useRef(0)
                 <span className="sys-val">2.4.1</span>
               </div>
             </div>
+          </div>
+
+          {/* Enrollment */}
+          <div className="panel" style={{ borderTop: '1px solid var(--border)', padding: '12px' }}>
+            <div className="panel-header" style={{ marginBottom: 8 }}>
+              <span className="panel-label">Zentrale</span>
+            </div>
+            <button
+              className={`enroll-btn ${enrolling ? 'enrolling' : ''}`}
+              onClick={handleEnroll}
+              disabled={enrolling || !connected}
+            >
+              {enrolling ? '◌ WIRD GESENDET...' : '+ BENUTZER HINZUFÜGEN'}
+            </button>
           </div>
         </div>
 
