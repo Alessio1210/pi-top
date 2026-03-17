@@ -134,33 +134,29 @@ except Exception:
         print(f"⚠️ Joystick nicht gefunden: {e}")
 
 def joystick_zoom_loop():
-    """Liest Joystick und passt digitalen Zoom an"""
+    """Liest pi-top Thumbstick (0x11) und passt digitalen Zoom an.
+    Register-Mapping (empirisch ermittelt):
+      r3=64 oder r5=64 → HOCH → zoom rein
+      r0=64            → RUNTER → zoom raus
+    """
     global zoom_level
     while True:
         try:
             if joystick is None:
                 time.sleep(1); continue
 
-            # pitop Joystick
-            if hasattr(joystick, 'vertical'):
-                v = joystick.vertical   # -1 … +1
-                if   v > 0.4:  delta =  0.05
-                elif v < -0.4: delta = -0.05
-                else:          delta = 0
-            else:
-                # smbus: Register 0x01 = Y-Achse (0–255, 128 = Mitte)
-                raw = joystick.read_byte_data(0x11, 0x01)
-                v   = (raw - 128) / 128.0
-                if   v > 0.4:  delta =  0.05
-                elif v < -0.4: delta = -0.05
-                else:          delta = 0
+            regs = [joystick.read_byte_data(0x11, r) for r in range(7)]
+            up   = regs[3] > 0 or regs[5] > 0
+            down = regs[0] > 0
 
-            if delta != 0:
+            if up or down:
+                delta = 0.3 if up else -0.3
                 with zoom_lock:
                     zoom_level = max(1.0, min(3.0, zoom_level + delta))
+                print(f"🔍 Zoom: {'🔼' if up else '🔽'} → {zoom_level:.1f}x")
         except Exception:
             pass
-        time.sleep(0.1)
+        time.sleep(0.15)
 
 # Hilfsfunktion für saubere Terminal-Ausgabe
 def cprint(msg):
