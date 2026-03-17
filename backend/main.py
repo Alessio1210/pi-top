@@ -324,85 +324,138 @@ def handle_access_flow(person_id, name):
 # hardware_pin_buffer etc.
 # I2C Treiber für Hardware-Komponenten (LCD, Keypad, Fingerprint)
 class HardwareManager:
+    LCD_GROVE_ADDR   = 0x3e
+    LCD_PCF_ADDRS    = [0x27, 0x3f]
+    RGB_ADDR         = 0x62
+
     def __init__(self):
-        self.cpp_process = None
         self.last_line1 = ""
         self.last_line2 = ""
-        
-        # 1. C++ Core-Engine starten (übernimmt Hardware-Scanning)
-        self.init_cpp_engine()
-        
-        # 2. pi-top Power-Status (optional)
+        self.lcd_bus    = None   # smbus2.SMBus instance
+        self.lcd_addr   = None
+        self.lcd_kind   = None   # 'grove' | 'pcf8574'
+        self.rgb_bus    = None
+
+        self._find_lcd()
+
         if Pitop:
             try:
                 self.pt_device = Pitop()
                 cprint(f"🔋 System-Akku: {self.pt_device.battery.capacity}%")
             except: pass
 
-    def init_cpp_engine(self):
-        """Kompiliert und startet die C++ Core-Engine"""
-        cpp_source = "core_engine.cpp"
-        cpp_binary = "./core_engine"
-        
+    def _find_lcd(self):
         try:
-            # Automatisches Kompilieren falls Source-Datei vorhanden
-            if os.path.exists(cpp_source):
-                cprint("🛠 Kompiliere Hochleistungs-Core (C++)...")
-                subprocess.run(["clang++", "-O3", cpp_source, "-o", cpp_binary], check=True)
-            
-            if os.path.exists(cpp_binary):
-                cprint("🚀 Starte C++ Core Engine...")
-                self.cpp_process = subprocess.Popen(
-                    [cpp_binary], 
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE, 
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    bufsize=1
-                )
-                threading.Thread(target=self._monitor_cpp_engine, daemon=True).start()
+            import smbus2 as _sm
+            candidates = [(self.LCD_GROVE_ADDR, 'grove')] + \
+                         [(a, 'pcf8574') for a in self.LCD_PCF_ADDRS]
+            for bus_num in [1, 3, 20, 21]:
+                for addr, kind in candidates:
+                    try:
+                        b = _sm.SMBus(bus_num)
+                        b.read_byte(addr)
+                        self.lcd_bus  = b
+                        self.lcd_addr = addr
+                        self.lcd_kind = kind
+                        cprint(f"📟 LCD gefunden (Bus {bus_num}, 0x{addr:02x}, {kind})")
+                        self._init_lcd()
+                        # RGB-Backlight auf gleichem Bus?
+                        try:
+                            b.read_byte(self.RGB_ADDR)
+                            self.rgb_bus = b
+                        except: pass
+                        return
+                    except Exception:
+                        try: b.close()
+                        except: pass
+            cprint("⚠️ LCD nicht gefunden (kein I2C-Display erkannt)")
         except Exception as e:
-            cprint(f"⚠️ Core Engine Fehler: {e}")
+            cprint(f"⚠️ LCD-Init Fehler: {e}")
 
-    def _monitor_cpp_engine(self):
-        """Hört auf Nachrichten von der C++ Engine"""
-        if not self.cpp_process: return
-        for line in self.cpp_process.stdout:
-            line = line.strip()
-            if line.startswith("KEY:"):
-                key = line.split(":")[1]
-                process_key_input(key)
-            elif line.startswith("FOUND:"):
-                cprint(f"✨ Hardware erkannt: {line.split(':')[1]}")
-            elif line == "READY":
-                cprint("✅ HOCHLEISTUNGS-CORE IST BEREIT")
-                self.write_lcd("Hallo!", "Bereit...")
+    def _lcd_cmd(self, cmd):
+        if self.lcd_kind == 'grove':
+            self.lcd_bus.write_i2c_block_data(self.lcd_addr, 0x80, [cmd])
+        else:
+            self._pcf_send(cmd, 0)
+
+    def _lcd_data(self, ch):
+        if self.lcd_kind == 'grove':
+            self.lcd_bus.write_i2c_block_data(self.lcd_addr, 0x40, [ch])
+        else:
+            self._pcf_send(ch, 1)
+
+    def _pcf_nibble(self, n):
+        BL = 0x08
+        EN = 0x04
+        self.lcd_bus.write_byte(self.lcd_addr, n | BL | EN)
+        time.sleep(0.001)
+        self.lcd_bus.write_byte(self.lcd_addr, (n | BL) & ~EN)
+        time.sleep(0.0001)
+
+    def _pcf_send(self, val, rs):
+        hi = (val & 0xF0) | rs
+        lo = ((val << 4) & 0xF0) | rs
+        self._pcf_nibble(hi)
+        self._pcf_nibble(lo)
+
+    def _init_lcd(self):
+        try:
+            if self.lcd_kind == 'grove':
+                time.sleep(0.05)
+                self._lcd_cmd(0x38)
+                time.sleep(0.001)
+                self._lcd_cmd(0x0C)
+                time.sleep(0.001)
+                self._lcd_cmd(0x01)
+                time.sleep(0.003)
+            else:
+                time.sleep(0.05)
+                self._pcf_nibble(0x30); time.sleep(0.005)
+                self._pcf_nibble(0x30); time.sleep(0.005)
+                self._pcf_nibble(0x30); time.sleep(0.002)
+                self._pcf_nibble(0x20)                   # 4-bit
+                self._pcf_send(0x28, 0)                  # 2 lines
+                self._pcf_send(0x0C, 0)                  # Display on
+                self._pcf_send(0x06, 0)                  # Entry mode
+                self._pcf_send(0x01, 0)                  # Clear
+                time.sleep(0.003)
+            cprint("📟 LCD initialisiert")
+        except Exception as e:
+            cprint(f"⚠️ LCD-Init Fehler: {e}")
 
     def write_lcd(self, line1, line2=""):
-        """Schickt Text-Befehle an die C++ Engine"""
-        if self.cpp_process:
-            try:
-                msg = f"LCD:{line1}|{line2}\n"
-                self.cpp_process.stdin.write(msg)
-                self.cpp_process.stdin.flush()
-            except: pass
-        
-        # Lokale State-Kontrolle für Console
         if line1 != self.last_line1 or line2 != self.last_line2:
             self.last_line1, self.last_line2 = line1, line2
-            print(f"\r📟 [LCD] {line1:10} | {line2:10}", flush=True)
+            print(f"\r📟 [LCD] {line1:16} | {line2:16}", flush=True)
+        if self.lcd_bus is None:
+            return
+        try:
+            if self.lcd_kind == 'grove':
+                self._lcd_cmd(0x01); time.sleep(0.003)
+                self._lcd_cmd(0x80)
+                for c in line1[:16]: self._lcd_data(ord(c))
+                self._lcd_cmd(0xC0)
+                for c in line2[:16]: self._lcd_data(ord(c))
+            else:
+                self._pcf_send(0x01, 0); time.sleep(0.003)
+                self._pcf_send(0x80, 0)
+                for c in line1[:16]: self._pcf_send(ord(c), 1)
+                self._pcf_send(0xC0, 0)
+                for c in line2[:16]: self._pcf_send(ord(c), 1)
+        except Exception as e:
+            cprint(f"⚠️ LCD Schreibfehler: {e}")
 
     def set_lcd_color(self, r, g, b):
-        """Schickt Farbbefehle an die C++ Engine"""
-        if self.cpp_process:
-            try:
-                msg = f"RGB:{r},{g},{b}\n"
-                self.cpp_process.stdin.write(msg)
-                self.cpp_process.stdin.flush()
-            except: pass
+        if self.rgb_bus is None:
+            return
+        try:
+            addr = self.RGB_ADDR
+            for reg, val in [(0x00, 0x00), (0x08, 0xAA),
+                             (0x04, r), (0x03, g), (0x02, b)]:
+                self.rgb_bus.write_i2c_block_data(addr, reg, [val])
+        except: pass
 
     def read_fingerprint(self):
-        # Fingerprint bleibt vorerst deaktiviert, bis er in C++ ist
         return None
 
 hw = HardwareManager()
