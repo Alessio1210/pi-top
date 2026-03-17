@@ -1180,6 +1180,70 @@ def capture_face_api():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
+@app.route('/api/capture_face')
+def capture_face_api():
+    """Nimmt aktuellen Frame, erkennt Gesicht, gibt Crop-Foto + Encoding zurück."""
+    with ai_frame_lock:
+        frame = ai_frame_buffer.copy() if ai_frame_buffer is not None else None
+    if frame is None:
+        return jsonify({'success': False, 'error': 'Kein Kamerabild verfügbar'})
+    try:
+        small = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)
+        rgb   = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
+        locs  = face_recognition.face_locations(rgb)
+        if not locs:
+            return jsonify({'success': False, 'error': 'Kein Gesicht im Bild erkannt'})
+        encs = face_recognition.face_encodings(rgb, locs)
+        top, right, bottom, left = [v * 2 for v in locs[0]]
+        h, w = frame.shape[:2]
+        pad = 30
+        crop = frame[max(0,top-pad):min(h,bottom+pad), max(0,left-pad):min(w,right+pad)]
+        _, buf = cv2.imencode('.jpg', crop, [cv2.IMWRITE_JPEG_QUALITY, 90])
+        photo_b64 = base64.b64encode(buf.tobytes()).decode()
+        return jsonify({
+            'success': True,
+            'photo': f'data:image/jpeg;base64,{photo_b64}',
+            'encoding': encs[0].tolist()
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+
+@app.route('/api/enroll', methods=['POST'])
+def enroll_api():
+    """Speichert neue Person mit Gesicht in Supabase, lädt known_faces neu."""
+    if not supabase:
+        return jsonify({'success': False, 'error': 'Supabase nicht verbunden'})
+    data      = request.json or {}
+    first     = data.get('first_name', '').strip()
+    last      = data.get('last_name', '').strip()
+    dept      = data.get('department', '').strip()
+    pin       = data.get('pin', '') or None
+    encoding  = data.get('encoding', [])
+    photo_b64 = data.get('photo', '')
+    name = f"{first} {last}".strip()
+    if not name or not encoding:
+        return jsonify({'success': False, 'error': 'Name und Gesicht erforderlich'})
+    try:
+        photo_url = None
+        if photo_b64:
+            raw      = base64.b64decode(photo_b64.split(',')[-1])
+            filename = f"{uuid.uuid4()}.jpg"
+            supabase.storage.from_('person-photos').upload(filename, raw, {'content-type': 'image/jpeg'})
+            photo_url = supabase.storage.from_('person-photos').get_public_url(filename)
+
+        row = {'name': name, 'face_encoding': encoding, 'photo_url': photo_url, 'pin': pin}
+        if dept:
+            row['department'] = dept
+        result = supabase.table('persons').insert(row).execute()
+        new_id = result.data[0]['id']
+        load_known_faces()
+        print(f"✅ Neuer Benutzer enrollt: {name} (ID {new_id})")
+        return jsonify({'success': True, 'id': new_id, 'name': name})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+
 @app.route('/api/enroll_unknown', methods=['POST'])
 def enroll_unknown():
     """Zentrale triggert Enrollment für letzte unbekannte Person.

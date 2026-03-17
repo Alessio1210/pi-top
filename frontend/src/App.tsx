@@ -1,9 +1,177 @@
 import { useState, useEffect, useRef } from 'react'
 import './index.css'
 
-// Dynamisch — funktioniert egal von welchem Gerät aus zugegriffen wird
 const BACKEND = `http://${window.location.hostname}:8000`
-// App.css intentionally not imported
+
+// ─── ENROLL PAGE ──────────────────────────────────────────────────────────────
+function EnrollPage({ onBack }: { onBack: () => void }) {
+  const [capturing, setCapturing]   = useState(false)
+  const [captured, setCaptured]     = useState<{ photo: string; encoding: number[] } | null>(null)
+  const [captureErr, setCaptureErr] = useState('')
+  const [firstName, setFirstName]   = useState('')
+  const [lastName, setLastName]     = useState('')
+  const [department, setDepartment] = useState('')
+  const [pin, setPin]               = useState('')
+  const [saving, setSaving]         = useState(false)
+  const [saved, setSaved]           = useState<{ id: number; name: string } | null>(null)
+  const [saveErr, setSaveErr]       = useState('')
+
+  async function captureFace() {
+    setCapturing(true)
+    setCaptureErr('')
+    try {
+      const res  = await fetch(`${BACKEND}/api/capture_face`)
+      const data = await res.json()
+      if (data.success) {
+        setCaptured({ photo: data.photo, encoding: data.encoding })
+      } else {
+        setCaptureErr(data.error || 'Fehler')
+      }
+    } catch {
+      setCaptureErr('Verbindungsfehler')
+    } finally {
+      setCapturing(false)
+    }
+  }
+
+  async function handleSave() {
+    if (!captured)       return setSaveErr('Zuerst Gesicht aufnehmen')
+    if (!firstName.trim()) return setSaveErr('Vorname erforderlich')
+    if (!lastName.trim())  return setSaveErr('Nachname erforderlich')
+    setSaving(true)
+    setSaveErr('')
+    try {
+      const res  = await fetch(`${BACKEND}/api/enroll`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          first_name: firstName.trim(),
+          last_name:  lastName.trim(),
+          department: department.trim(),
+          pin:        pin || null,
+          encoding:   captured.encoding,
+          photo:      captured.photo,
+        }),
+      })
+      const data = await res.json()
+      if (data.success) {
+        setSaved({ id: data.id, name: data.name })
+      } else {
+        setSaveErr(data.error || 'Fehler beim Speichern')
+      }
+    } catch {
+      setSaveErr('Verbindungsfehler')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (saved) {
+    return (
+      <div className="enroll-success">
+        <div className="enroll-success-icon">■</div>
+        <div className="enroll-success-title">BENUTZER REGISTRIERT</div>
+        <div className="enroll-success-name">{saved.name}</div>
+        <div className="enroll-success-id">ID #{String(saved.id).padStart(6, '0')}</div>
+        <div className="enroll-success-sub">Gesicht wird ab sofort erkannt</div>
+        <button className="enroll-btn" style={{ marginTop: 24, maxWidth: 240 }} onClick={onBack}>
+          ← ZURÜCK ZUR ÜBERSICHT
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="enroll-page">
+      {/* Header */}
+      <div className="enroll-header">
+        <button className="enroll-back-btn" onClick={onBack}>← ZURÜCK</button>
+        <span className="enroll-header-title">NEUEN BENUTZER REGISTRIEREN</span>
+        <span className="enroll-header-id">ENROLLMENT · SEKTOR A1</span>
+      </div>
+
+      <div className="enroll-body">
+        {/* LEFT: Kamera + Capture */}
+        <div className="enroll-left">
+          <div className="panel-header"><span className="panel-label">Live-Kamera</span></div>
+          <div className="enroll-cam-wrap">
+            <img src={`${BACKEND}/video_feed`} alt="Kamera" className="enroll-cam" />
+            <div className="cam-corner tl"/><div className="cam-corner tr"/>
+            <div className="cam-corner bl"/><div className="cam-corner br"/>
+          </div>
+          <button
+            className={`enroll-capture-btn ${capturing ? 'enrolling' : ''}`}
+            onClick={captureFace}
+            disabled={capturing}
+          >
+            {capturing ? '◌ ERKENNUNG LÄUFT...' : '⊙ GESICHT AUFNEHMEN'}
+          </button>
+          {captureErr && <div className="enroll-err">{captureErr}</div>}
+
+          {captured && (
+            <div className="enroll-face-preview">
+              <div className="panel-header" style={{ marginTop: 12 }}>
+                <span className="panel-label">Aufgenommenes Gesicht</span>
+                <span className="panel-id" style={{ color: 'var(--green)' }}>● BEREIT</span>
+              </div>
+              <img src={captured.photo} alt="Gesicht" className="enroll-face-img" />
+            </div>
+          )}
+        </div>
+
+        {/* RIGHT: Formular */}
+        <div className="enroll-right">
+          <div className="panel-header"><span className="panel-label">Benutzerdaten</span></div>
+
+          <div className="enroll-form">
+            <label className="enroll-label">VORNAME</label>
+            <input className="enroll-input" value={firstName} onChange={e => setFirstName(e.target.value)} placeholder="Max" />
+
+            <label className="enroll-label">NACHNAME</label>
+            <input className="enroll-input" value={lastName} onChange={e => setLastName(e.target.value)} placeholder="Mustermann" />
+
+            <label className="enroll-label">ABTEILUNG</label>
+            <input className="enroll-input" value={department} onChange={e => setDepartment(e.target.value)} placeholder="z.B. IT, Verwaltung ..." />
+
+            <label className="enroll-label">
+              PIN
+              <span style={{ fontSize: 8, color: 'var(--text-dim)', marginLeft: 8 }}>WIRD NICHT ANGEZEIGT</span>
+            </label>
+            <input
+              className="enroll-input"
+              type="password"
+              value={pin}
+              onChange={e => setPin(e.target.value.replace(/\D/g, '').slice(0, 8))}
+              placeholder="••••"
+              autoComplete="new-password"
+            />
+            {pin && (
+              <div className="enroll-pin-hint">
+                {'•'.repeat(pin.length)} · {pin.length} Stellen
+              </div>
+            )}
+
+            <div className="enroll-id-note">
+              <span className="sys-key">ID</span>
+              <span className="sys-val" style={{ color: 'var(--text-dim)' }}>WIRD AUTOMATISCH VERGEBEN</span>
+            </div>
+
+            {saveErr && <div className="enroll-err">{saveErr}</div>}
+
+            <button
+              className={`enroll-capture-btn ${saving ? 'enrolling' : ''} ${!captured ? 'disabled' : ''}`}
+              style={{ marginTop: 16 }}
+              onClick={handleSave}
+              disabled={saving || !captured}
+            >
+              {saving ? '◌ WIRD GESPEICHERT...' : '+ IN DATENBANK EINTRAGEN'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 interface Person {
   name: string
@@ -42,13 +210,13 @@ function formatTime(d: Date) {
 
 
 export default function App() {
+  const [page, setPage]         = useState<'main' | 'enroll'>('main')
   const [person, setPerson]     = useState<Person | null>(null)
   const [stats, setStats]       = useState<Stats>({ total_persons: 0, detections_today: 0 })
   const [connected, setConnected] = useState(false)
   const [log, setLog]           = useState<LogEntry[]>([])
   const [doorStatus, setDoorStatus] = useState<'closed' | 'checking' | 'open' | 'denied'>('closed')
   const [toast, setToast]       = useState<{ msg: string; type: 'ok' | 'err' } | null>(null)
-  const [enrolling, setEnrolling] = useState(false)
   const logIdRef                = useRef(0)
   const toastTimer              = useRef<ReturnType<typeof setTimeout> | null>(null)
   const now                     = useClock()
@@ -105,17 +273,11 @@ export default function App() {
 
   const threatLevel = person ? 3 : connected ? 1 : 2
 
-  async function handleEnroll() {
-    setEnrolling(true)
-    try {
-      await fetch(`${BACKEND}/api/enroll_unknown`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
-      showToast('ENROLLMENT GESTARTET', 'ok')
-    } catch {
-      showToast('VERBINDUNGSFEHLER', 'err')
-    } finally {
-      setEnrolling(false)
-    }
+  function handleEnroll() {
+    setPage('enroll')
   }
+
+  if (page === 'enroll') return <EnrollPage onBack={() => setPage('main')} />
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
@@ -400,11 +562,11 @@ export default function App() {
               <span className="panel-label">Zentrale</span>
             </div>
             <button
-              className={`enroll-btn ${enrolling ? 'enrolling' : ''}`}
+              className="enroll-btn"
               onClick={handleEnroll}
-              disabled={enrolling || !connected}
+              disabled={!connected}
             >
-              {enrolling ? '◌ WIRD GESENDET...' : '+ BENUTZER HINZUFÜGEN'}
+              + BENUTZER HINZUFÜGEN
             </button>
           </div>
         </div>

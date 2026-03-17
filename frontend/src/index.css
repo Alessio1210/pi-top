@@ -791,6 +791,158 @@ body::after {
   to   { opacity: 0; }
 }
 
+/* ─── ENROLL PAGE ─────────────────────────────────────── */
+.enroll-page {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+.enroll-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+.enroll-back-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-mid);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 2px;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.enroll-back-btn:hover { color: var(--amber); border-color: var(--border-amber); }
+.enroll-header-title {
+  font-family: var(--heading);
+  font-size: 13px;
+  letter-spacing: 3px;
+  color: var(--amber);
+  flex: 1;
+}
+.enroll-header-id {
+  font-size: 9px;
+  letter-spacing: 2px;
+  color: var(--text-dim);
+}
+.enroll-body {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  flex: 1;
+}
+.enroll-left {
+  border-right: 1px solid var(--border);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.enroll-right {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.enroll-cam-wrap {
+  position: relative;
+  background: #000;
+  overflow: hidden;
+  aspect-ratio: 4/3;
+}
+.enroll-cam {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.enroll-capture-btn {
+  width: 100%;
+  padding: 10px;
+  background: transparent;
+  border: 1px solid var(--border-amber);
+  color: var(--amber);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 2px;
+  cursor: pointer;
+  transition: background 0.15s;
+  text-transform: uppercase;
+}
+.enroll-capture-btn:hover:not(:disabled):not(.disabled) { background: var(--amber-glow); }
+.enroll-capture-btn:disabled, .enroll-capture-btn.disabled { opacity: 0.35; cursor: not-allowed; }
+.enroll-capture-btn.enrolling { color: var(--text-mid); border-color: var(--border); }
+.enroll-face-preview { display: flex; flex-direction: column; gap: 8px; }
+.enroll-face-img {
+  width: 100%;
+  max-height: 200px;
+  object-fit: contain;
+  border: 1px solid var(--green);
+  box-shadow: 0 0 12px rgba(39,174,96,0.2);
+}
+.enroll-form { display: flex; flex-direction: column; gap: 6px; }
+.enroll-label {
+  font-size: 9px;
+  letter-spacing: 2px;
+  color: var(--text-dim);
+  margin-top: 8px;
+}
+.enroll-input {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--amber);
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 8px 10px;
+  outline: none;
+  transition: border-color 0.15s;
+  width: 100%;
+}
+.enroll-input:focus { border-color: var(--border-amber); }
+.enroll-input::placeholder { color: var(--text-dim); }
+.enroll-pin-hint {
+  font-size: 9px;
+  letter-spacing: 1px;
+  color: var(--text-mid);
+  padding: 2px 4px;
+}
+.enroll-id-note {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 0 4px;
+  border-top: 1px solid var(--border);
+  margin-top: 8px;
+  font-size: 9px;
+  letter-spacing: 1px;
+}
+.enroll-err {
+  font-size: 9px;
+  letter-spacing: 1px;
+  color: var(--red);
+  padding: 4px;
+  border: 1px solid var(--red);
+  background: var(--red-glow);
+}
+.enroll-success {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: var(--bg);
+}
+.enroll-success-icon  { font-size: 48px; color: var(--green); }
+.enroll-success-title { font-family: var(--heading); font-size: 16px; letter-spacing: 4px; color: var(--green); }
+.enroll-success-name  { font-size: 20px; letter-spacing: 2px; color: var(--amber); }
+.enroll-success-id    { font-size: 12px; letter-spacing: 3px; color: var(--text-mid); }
+.enroll-success-sub   { font-size: 10px; letter-spacing: 2px; color: var(--text-dim); }
+
 /* ─── ENROLL BUTTON ───────────────────────────────────── */
 .enroll-btn {
   width: 100%;
