@@ -469,6 +469,7 @@ class HardwareManager:
         return None
 
 hw = HardwareManager()
+hw.write_lcd("Hallo!", "Bereit...")
 hardware_pin_buffer = ""
 last_key_state = 0
 
