@@ -62,7 +62,7 @@ access_state = "IDLE"
 access_cooldown = 0
 
 # Hardware Konfiguration
-BUZZNR_PIN = 6  # A2 auf Foundation Plate ist GPIO 6
+BUZZER_PIN = 6  # A2 auf Foundation Plate ist GPIO 6
 # Wir nutzen gpiozero für einfache Ansteuerung
 try:
     from pitop import Pitop
@@ -816,6 +816,7 @@ def ai_worker_thread():
                     name = known_names[0]
                     if access_state == "IDLE" and time.time() > access_cooldown:
                         access_state = "REQUESTING"
+                        set_ampel("gelb")   # Sofort gelb wenn Gesicht erkannt
                         try:
                             idx = known_face_names.index(name)
                             person_id = known_face_ids[idx]
@@ -828,7 +829,7 @@ def ai_worker_thread():
                 unknown_face_counter += 1
                 hw.write_lcd("Unbekannt", "Wer bist du?")
                 if access_state == "IDLE":
-                    set_ampel("aus")
+                    set_ampel("gelb")   # Auch bei unbekanntem Gesicht sofort gelb
                 if unknown_face_counter >= UNKNOWN_THRESHOLD:
                     trigger_alert(frame_to_process)
                     unknown_face_counter = 0

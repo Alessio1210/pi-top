@@ -86,18 +86,24 @@ def hardware_button_loop():
     """Überwacht die verbundenen Tasten an Pi 2"""
     global current_request
     while True:
+        decision = None
         with request_lock:
             if current_request and current_request['status'] == 'pending':
                 if btn_accept.is_pressed:
                     current_request['status'] = 'accepted'
-                    print(f"\n✅ Zentrale (D0 Grün): Zugriff ERLAUBT für {current_request['name']}")
-                    log_to_db(current_request)
-                    time.sleep(1)   # Debounce
+                    decision = current_request.copy()
                 elif btn_reject.is_pressed:
                     current_request['status'] = 'rejected'
-                    print(f"\n❌ Zentrale (D3 Rot): Zugriff ABGELEHNT für {current_request['name']}")
-                    log_to_db(current_request)
-                    time.sleep(1)   # Debounce
+                    decision = current_request.copy()
+
+        if decision:
+            if decision['status'] == 'accepted':
+                print(f"\n✅ Zentrale (D0 Grün): Zugriff ERLAUBT für {decision['name']}")
+            else:
+                print(f"\n❌ Zentrale (D3 Rot): Zugriff ABGELEHNT für {decision['name']}")
+            log_to_db(decision)
+            time.sleep(1)  # Debounce außerhalb des Locks
+
         time.sleep(0.1)
 
 @app.route('/api/request_access', methods=['POST'])
