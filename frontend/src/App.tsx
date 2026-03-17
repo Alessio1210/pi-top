@@ -243,6 +243,7 @@ export default function App() {
   const [toast, setToast]       = useState<{ msg: string; type: 'ok' | 'err' } | null>(null)
   const logIdRef                = useRef(0)
   const toastTimer              = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const doorStatusRef           = useRef<'closed' | 'checking' | 'open' | 'denied'>('closed')
   const now                     = useClock()
 
   function showToast(msg: string, type: 'ok' | 'err') {
@@ -280,7 +281,8 @@ export default function App() {
             total_persons:    data.total_persons    ?? 0,
             detections_today: data.detections_today ?? 0,
           })
-          if (data.door_status && data.door_status !== doorStatus) {
+          if (data.door_status && data.door_status !== doorStatusRef.current) {
+            doorStatusRef.current = data.door_status
             setDoorStatus(data.door_status)
             if (data.door_status === 'open')   showToast('ZUGANG GEWÄHRT', 'ok')
             if (data.door_status === 'denied') showToast('ZUGANG VERWEIGERT', 'err')

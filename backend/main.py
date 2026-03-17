@@ -244,7 +244,7 @@ def handle_access_flow(person_id, name):
 
                         # ── PIN-Abfrage ──────────────────────────────
                         pin_ok = True
-                        if keypad_bus is not None:
+                        if keypad_serial is not None:
                             # PIN aus Supabase laden
                             db_pin = None
                             if supabase:
@@ -369,18 +369,6 @@ class HardwareManager:
             cprint("⚠️ LCD nicht gefunden (kein I2C-Display erkannt)")
         except Exception as e:
             cprint(f"⚠️ LCD-Init Fehler: {e}")
-
-    def _lcd_cmd(self, cmd):
-        if self.lcd_kind == 'grove':
-            self.lcd_bus.write_i2c_block_data(self.lcd_addr, 0x80, [cmd])
-        else:
-            self._pcf_send(cmd, 0)
-
-    def _lcd_data(self, ch):
-        if self.lcd_kind == 'grove':
-            self.lcd_bus.write_i2c_block_data(self.lcd_addr, 0x40, [ch])
-        else:
-            self._pcf_send(ch, 1)
 
     def _pcf_nibble(self, n):
         BL = 0x08
@@ -691,9 +679,9 @@ def load_known_faces():
         known_face_ids = []
         
         for person in response.data:
-            # Face Encoding aus JSONB laden
+            if not person.get('face_encoding'):
+                continue
             encoding = np.array(person['face_encoding'])
-            
             known_face_encodings.append(encoding)
             known_face_names.append(person['name'])
             known_face_ids.append(person['id'])
