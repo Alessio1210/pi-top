@@ -114,49 +114,6 @@ def set_ampel(color):
     elif color == "gelb":  GPIO.output(AMPEL_GELB,  GPIO.HIGH)
     elif color == "gruen": GPIO.output(AMPEL_GRUEN, GPIO.HIGH)
 
-# Joystick (I2C) für digitalen Zoom
-zoom_level = 1.0   # 1.0 = kein Zoom, max 3.0
-zoom_lock  = threading.Lock()
-
-try:
-    from pitop.pma import Joystick as PitopJoystick
-    joystick = PitopJoystick("I2C")
-    print("🕹️  Joystick initialisiert (I2C)")
-except Exception:
-    try:
-        import smbus2
-        _jbus = smbus2.SMBus(1)
-        _jbus.read_byte(0x11)
-        joystick = _jbus
-        print("🕹️  Joystick initialisiert (I2C smbus 0x11)")
-    except Exception as e:
-        joystick = None
-        print(f"⚠️ Joystick nicht gefunden: {e}")
-
-def joystick_zoom_loop():
-    """Liest pi-top Thumbstick (0x11) und passt digitalen Zoom an.
-    Register-Mapping (empirisch ermittelt):
-      r3=64 oder r5=64 → HOCH → zoom rein
-      r0=64            → RUNTER → zoom raus
-    """
-    global zoom_level
-    while True:
-        try:
-            if joystick is None:
-                time.sleep(1); continue
-
-            regs = [joystick.read_byte_data(0x11, r) for r in range(7)]
-            up   = regs[3] > 0 or regs[5] > 0
-            down = regs[0] > 0
-
-            if up or down:
-                delta = 0.3 if up else -0.3
-                with zoom_lock:
-                    zoom_level = max(1.0, min(3.0, zoom_level + delta))
-                print(f"🔍 Zoom: {'🔼' if up else '🔽'} → {zoom_level:.1f}x")
-        except Exception:
-            pass
-        time.sleep(0.15)
 
 # Hilfsfunktion für saubere Terminal-Ausgabe
 def cprint(msg):
@@ -972,16 +929,7 @@ def generate_frames():
                 cv2.rectangle(frame, (left, top - th - 10), (left + tw + 10, top), color, -1)
                 cv2.putText(frame, label_text, (left + 5, top - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2)
             
-            # 4. Digitaler Zoom (Joystick)
-            with zoom_lock:
-                z = zoom_level
-            if z > 1.0:
-                h, w = frame.shape[:2]
-                crop_h, crop_w = int(h / z), int(w / z)
-                y0, x0 = (h - crop_h) // 2, (w - crop_w) // 2
-                frame = cv2.resize(frame[y0:y0+crop_h, x0:x0+crop_w], (w, h))
-
-            # 5. Kodieren & Senden (High Speed)
+            # 4. Kodieren & Senden (High Speed)
             ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
             
             if ret:
@@ -1286,8 +1234,6 @@ def main():
     hw_thread = threading.Thread(target=physical_hardware_loop, daemon=True)
     hw_thread.start()
 
-    threading.Thread(target=joystick_zoom_loop, daemon=True).start()
-    
     # PIN-Simulation deaktiviert (blockiert Terminal via tty.setraw)
     # sim_thread = threading.Thread(target=console_keypad_simulation, daemon=True)
     # sim_thread.start()
