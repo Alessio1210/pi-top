@@ -51,9 +51,18 @@ KEYPAD_KEYS = [
 keypad_bus = None
 try:
     import smbus2 as _smbus2
-    keypad_bus = _smbus2.SMBus(1)
-    keypad_bus.read_byte(KEYPAD_ADDR)
-    print("⌨️  Keypad initialisiert (I2C 0x20)")
+    for _bus_num in [1, 3, 20, 21]:
+        try:
+            _b = _smbus2.SMBus(_bus_num)
+            _b.read_byte(KEYPAD_ADDR)
+            keypad_bus = _b
+            print(f"⌨️  Keypad initialisiert (Bus {_bus_num}, I2C 0x{KEYPAD_ADDR:02x})")
+            break
+        except Exception:
+            try: _b.close()
+            except Exception: pass
+    if keypad_bus is None:
+        print(f"⚠️ Keypad nicht gefunden auf Bus 1/3/20/21 (Adresse 0x{KEYPAD_ADDR:02x})")
 except Exception as _e:
     keypad_bus = None
     print(f"⚠️ Keypad nicht gefunden: {_e}")
