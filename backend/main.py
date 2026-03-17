@@ -1157,10 +1157,13 @@ def enroll_api():
     try:
         photo_url = None
         if photo_b64:
-            raw      = base64.b64decode(photo_b64.split(',')[-1])
-            filename = f"{uuid.uuid4()}.jpg"
-            supabase.storage.from_('person-photos').upload(filename, raw, {'content-type': 'image/jpeg'})
-            photo_url = supabase.storage.from_('person-photos').get_public_url(filename)
+            try:
+                raw      = base64.b64decode(photo_b64.split(',')[-1])
+                filename = f"{uuid.uuid4()}.jpg"
+                supabase.storage.from_('person-photos').upload(filename, raw, {'content-type': 'image/jpeg'})
+                photo_url = supabase.storage.from_('person-photos').get_public_url(filename)
+            except Exception as photo_err:
+                print(f"⚠️ Foto-Upload übersprungen: {photo_err}")
 
         row = {'name': name, 'face_encoding': encoding, 'photo_url': photo_url, 'pin': pin}
         if dept:
