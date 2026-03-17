@@ -215,7 +215,6 @@ def set_led_color(color):
 def handle_access_flow(person_id, name):
     global access_state, access_cooldown, door_status, lcd_locked
 
-    lcd_locked = True
     print(f"\n📡 Sende Zugriffsanfrage fuer {name} an die Zentrale...")
     lcd("Bitte warten", "Zentrale prueft", force=True)
     set_ampel("gelb")
@@ -786,7 +785,7 @@ def ai_worker_thread():
     """
     Hintergrund-Thread für Face Recognition
     """
-    global ai_frame_buffer, ai_results, unknown_face_counter, access_state, access_cooldown
+    global ai_frame_buffer, ai_results, unknown_face_counter, access_state, access_cooldown, lcd_locked
     
     print("🤖 AI Worker gestartet...")
     
@@ -893,7 +892,8 @@ def ai_worker_thread():
                     name = known_names[0]
                     if access_state == "IDLE" and time.time() > access_cooldown:
                         access_state = "REQUESTING"
-                        set_ampel("gelb")   # Sofort gelb wenn Gesicht erkannt
+                        lcd_locked = True   # Sofort sperren bevor Thread startet
+                        set_ampel("gelb")
                         try:
                             idx = known_face_names.index(name)
                             person_id = known_face_ids[idx]
