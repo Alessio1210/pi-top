@@ -61,6 +61,8 @@ ZENTRALE_URL = os.getenv('ZENTRALE_URL', 'http://localhost:5001')
 access_state = "IDLE"
 access_cooldown = 0
 door_status = "closed"   # closed | checking | open | denied
+lcd_locked = False        # True während access_flow → AI-Thread schreibt nicht drüber
+_last_lcd  = ("", "")    # Cache: nur schreiben wenn Inhalt sich ändert
 
 # ── I2C Keypad (PCF8574, 0x20) ─────────────────────────────────────────────
 KEYPAD_ADDR = 0x20
@@ -103,7 +105,7 @@ def read_pin_input(prompt="PIN eingeben", length=4, timeout=20):
     """Liest PIN vom Keypad. Zeigt * auf LCD. # = Bestätigen, * = Löschen.
     Gibt eingegebenen PIN-String zurück, oder '' bei Timeout."""
     pin = ""
-    hw.write_lcd(prompt, "_" * length)
+    lcd(prompt, "_" * length, force=True)
     last_key = None
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -112,13 +114,13 @@ def read_pin_input(prompt="PIN eingeben", length=4, timeout=20):
             if key is not None:
                 if key == '*':
                     pin = pin[:-1]
-                    hw.write_lcd(prompt, "*" * len(pin) + "_" * (length - len(pin)))
+                    lcd(prompt, "*" * len(pin) + "_" * (length - len(pin)), force=True)
                 elif key == '#':
                     break
                 elif key.isdigit() and len(pin) < length:
                     pin += key
                     display = "*" * len(pin) + "_" * (length - len(pin))
-                    hw.write_lcd(prompt, display)
+                    lcd(prompt, display, force=True)
                     if len(pin) == length:
                         time.sleep(0.3)
                         break
@@ -186,6 +188,19 @@ def set_ampel(color):
 def cprint(msg):
     print(f"\r{msg}", flush=True)
 
+def lcd(line1, line2="", force=False):
+    """Schreibt aufs LCD — nur wenn Inhalt sich geändert hat (Cache).
+    Respektiert lcd_locked: AI-Thread darf nicht überschreiben während access_flow läuft.
+    force=True ignoriert den Lock (für access_flow selbst)."""
+    global _last_lcd
+    if lcd_locked and not force:
+        return
+    if (line1, line2) == _last_lcd:
+        return
+    _last_lcd = (line1, line2)
+    hw.write_lcd(line1, line2)
+
+
 def set_led_color(color):
     if color == "green":
         if led_green: led_green.on()
@@ -198,10 +213,11 @@ def set_led_color(color):
         if led_red: led_red.off()
 
 def handle_access_flow(person_id, name):
-    global access_state, access_cooldown, door_status
+    global access_state, access_cooldown, door_status, lcd_locked
 
+    lcd_locked = True
     print(f"\n📡 Sende Zugriffsanfrage fuer {name} an die Zentrale...")
-    hw.write_lcd("Bitte warten", "Zentrale prueft")
+    lcd("Bitte warten", "Zentrale prueft", force=True)
     set_ampel("gelb")
     door_status = "checking"
 
@@ -215,7 +231,7 @@ def handle_access_flow(person_id, name):
                     status = status_res.json().get("status")
                     if status == "accepted":
                         print(f"✅ Zentrale hat Zugriff GEWAEHRT fuer {name}")
-                        hw.write_lcd("ANGENOMMEN", name[:16])
+                        lcd("ANGENOMMEN", name[:16], force=True)
                         time.sleep(1)
 
                         # ── PIN-Abfrage ──────────────────────────────
@@ -232,14 +248,14 @@ def handle_access_flow(person_id, name):
                                     pass
 
                             if db_pin:
-                                hw.write_lcd("Bitte PIN", "eingeben:")
+                                lcd("Bitte PIN", "eingeben:", force=True)
                                 entered = read_pin_input("PIN eingeben:", length=4)
                                 if entered == str(db_pin):
                                     print(f"🔑 PIN korrekt für {name}")
-                                    hw.write_lcd("PIN korrekt", "Willkommen!")
+                                    lcd("PIN korrekt", "Willkommen!", force=True)
                                 else:
                                     print(f"❌ Falscher PIN für {name}")
-                                    hw.write_lcd("Falscher PIN", "Zugang verweigert")
+                                    lcd("Falscher PIN", "Zugang verweigert", force=True)
                                     set_led_color("red")
                                     set_ampel("rot")
                                     door_status = "denied"
@@ -258,7 +274,7 @@ def handle_access_flow(person_id, name):
                         break
                     elif status == "rejected":
                         print(f"❌ Zentrale hat Zugriff ABGELEHNT fuer {name}")
-                        hw.write_lcd("ABGELEHNT", name[:16])
+                        lcd("ABGELEHNT", name[:16], force=True)
                         set_led_color("red")
                         set_ampel("rot")
                         door_status = "denied"
@@ -268,7 +284,7 @@ def handle_access_flow(person_id, name):
                         break
                     elif status == "timeout":
                         print("⏰ Timeout bei der Zentrale.")
-                        hw.write_lcd("ABGELEHNT", "Timeout")
+                        lcd("ABGELEHNT", "Timeout", force=True)
                         set_led_color("red")
                         set_ampel("rot")
                         door_status = "denied"
@@ -279,10 +295,10 @@ def handle_access_flow(person_id, name):
             set_led_color("off")
             set_ampel("aus")
             door_status = "closed"
-            hw.write_lcd("Bereit", "Warte auf Gesicht")
+            lcd("Bereit", "Warte auf Gesicht", force=True)
     except Exception as e:
         print(f"⚠️ Fehler bei Verbindung zur Zentrale: {e}")
-        hw.write_lcd("NETZWERKFEHLER", "Zentrale offline")
+        lcd("NETZWERKFEHLER", "Zentrale offline", force=True)
         set_led_color("red")
         set_ampel("rot")
         door_status = "denied"
@@ -293,6 +309,7 @@ def handle_access_flow(person_id, name):
     finally:
         access_cooldown = time.time() + 5
         access_state = "IDLE"
+        lcd_locked = False
 
 # hardware_pin_buffer etc.
 # I2C Treiber für Hardware-Komponenten (LCD, Keypad, Fingerprint)
@@ -884,12 +901,12 @@ def ai_worker_thread():
                             person_id = 0
                         threading.Thread(target=handle_access_flow, args=(person_id, name), daemon=True).start()
                     elif access_state == "IDLE":
-                        hw.write_lcd("Hallo!", name)
+                        lcd("Hallo!", name)
             elif has_unknown:
                 unknown_face_counter += 1
-                hw.write_lcd("Unbekannt", "Wer bist du?")
+                lcd("Unbekannt", "Wer bist du?")
                 if access_state == "IDLE":
-                    set_ampel("gelb")   # Auch bei unbekanntem Gesicht sofort gelb
+                    set_ampel("gelb")
                 if unknown_face_counter >= UNKNOWN_THRESHOLD:
                     trigger_alert(frame_to_process)
                     unknown_face_counter = 0
@@ -900,7 +917,7 @@ def ai_worker_thread():
                 if unknown_face_counter > 0:
                     unknown_face_counter -= 1
                 if unknown_face_counter == 0:
-                    hw.write_lcd("Hallo!", "Bereit...")
+                    lcd("Hallo!", "Bereit...")
 
         except Exception as e:
             print(f"⚠️ AI Thread Fehler: {e}")
