@@ -46,6 +46,7 @@ export default function App() {
   const [stats, setStats]       = useState<Stats>({ total_persons: 0, detections_today: 0 })
   const [connected, setConnected] = useState(false)
   const [log, setLog]           = useState<LogEntry[]>([])
+  const [doorStatus, setDoorStatus] = useState<'closed' | 'checking' | 'open' | 'denied'>('closed')
 const logIdRef                = useRef(0)
   const now                     = useClock()
 
@@ -78,6 +79,7 @@ const logIdRef                = useRef(0)
             total_persons:    data.total_persons    ?? 0,
             detections_today: data.detections_today ?? 0,
           })
+          if (data.door_status) setDoorStatus(data.door_status)
         }
       } catch (err) {
         console.error('Failed to parse event data', err)
@@ -281,6 +283,32 @@ const logIdRef                = useRef(0)
                 {[1,2,3,4,5].map(n => (
                   <div key={n} className={`threat-bar ${n <= threatLevel ? `active-${n}` : ''}`} />
                 ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Tür-Status */}
+          <div className="panel" style={{ borderTop: '1px solid var(--border)' }}>
+            <div className="panel-header">
+              <span className="panel-label">Türstatus</span>
+              <span className="panel-id">SEKTOR A1</span>
+            </div>
+            <div style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{
+                  width: 10, height: 10, borderRadius: '50%', flexShrink: 0,
+                  background: doorStatus === 'open' ? 'var(--green)' : doorStatus === 'checking' ? '#f0c040' : doorStatus === 'denied' ? 'var(--red)' : 'var(--text-dim)',
+                  boxShadow: doorStatus === 'open' ? '0 0 8px var(--green)' : doorStatus === 'checking' ? '0 0 8px #f0c040' : doorStatus === 'denied' ? '0 0 8px var(--red)' : 'none',
+                }} />
+                <span style={{
+                  fontSize: 11, letterSpacing: 2, fontFamily: 'monospace',
+                  color: doorStatus === 'open' ? 'var(--green)' : doorStatus === 'checking' ? '#f0c040' : doorStatus === 'denied' ? 'var(--red)' : 'var(--text-dim)',
+                }}>
+                  {doorStatus === 'open' ? 'GEÖFFNET' : doorStatus === 'checking' ? 'PRÜFUNG...' : doorStatus === 'denied' ? 'ZUGANG VERWEIGERT' : 'GESICHERT'}
+                </span>
+              </div>
+              <div style={{ fontSize: 8, color: 'var(--text-dim)', letterSpacing: 1 }}>
+                {doorStatus === 'open' ? 'Tür offen · Schließt automatisch' : doorStatus === 'checking' ? 'Warte auf Zentrale-Entscheidung' : doorStatus === 'denied' ? 'Zugriff wurde abgelehnt' : 'Tür verriegelt · Kein Zutritt'}
               </div>
             </div>
           </div>

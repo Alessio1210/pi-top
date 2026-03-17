@@ -60,6 +60,7 @@ UNKNOWN_THRESHOLD = 15  # Ca. 2-3 Sekunden durchgehend unbekannt vor Alarm
 ZENTRALE_URL = os.getenv('ZENTRALE_URL', 'http://localhost:5001')
 access_state = "IDLE"
 access_cooldown = 0
+door_status = "closed"   # closed | checking | open | denied
 
 # Hardware Konfiguration
 BUZZER_PIN = 6  # A2 auf Foundation Plate ist GPIO 6
@@ -131,11 +132,12 @@ def set_led_color(color):
         if led_red: led_red.off()
 
 def handle_access_flow(person_id, name):
-    global access_state, access_cooldown
+    global access_state, access_cooldown, door_status
 
     print(f"\n📡 Sende Zugriffsanfrage fuer {name} an die Zentrale...")
     hw.write_lcd("Bitte warten", "Zentrale prueft")
-    set_ampel("gelb")   # 🟡 Gesicht erkannt — warte auf Entscheidung
+    set_ampel("gelb")
+    door_status = "checking"
 
     try:
         res = requests.post(f"{ZENTRALE_URL}/api/request_access", json={"person_id": person_id, "name": name}, timeout=3)
@@ -150,15 +152,17 @@ def handle_access_flow(person_id, name):
                         hw.write_lcd("ANGENOMMEN", name[:16])
                         set_led_color("green")
                         set_ampel("gruen")
+                        door_status = "open"
                         if buzzer:
                             buzzer.on(); time.sleep(0.2); buzzer.off()
-                        time.sleep(5)
+                        time.sleep(10)
                         break
                     elif status == "rejected":
                         print(f"❌ Zentrale hat Zugriff ABGELEHNT fuer {name}")
                         hw.write_lcd("ABGELEHNT", name[:16])
                         set_led_color("red")
                         set_ampel("rot")
+                        door_status = "denied"
                         if buzzer:
                             buzzer.on(); time.sleep(0.6); buzzer.off()
                         time.sleep(3)
@@ -168,21 +172,25 @@ def handle_access_flow(person_id, name):
                         hw.write_lcd("ABGELEHNT", "Timeout")
                         set_led_color("red")
                         set_ampel("rot")
+                        door_status = "denied"
                         time.sleep(3)
                         break
 
             # Zurücksetzen
             set_led_color("off")
             set_ampel("aus")
+            door_status = "closed"
             hw.write_lcd("Bereit", "Warte auf Gesicht")
     except Exception as e:
         print(f"⚠️ Fehler bei Verbindung zur Zentrale: {e}")
         hw.write_lcd("NETZWERKFEHLER", "Zentrale offline")
         set_led_color("red")
         set_ampel("rot")
+        door_status = "denied"
         time.sleep(2)
         set_led_color("off")
         set_ampel("aus")
+        door_status = "closed"
     finally:
         access_cooldown = time.time() + 5
         access_state = "IDLE"
@@ -967,7 +975,8 @@ def sse_events():
                     "name": name,
                     "id": p_id,
                     "total_persons": len(known_face_names),
-                    "detections_today": stats.get('total_detections_today', 0)
+                    "detections_today": stats.get('total_detections_today', 0),
+                    "door_status": door_status
                 }
                 yield f"data: {json.dumps(data)}\n\n"
             except Exception as e:
