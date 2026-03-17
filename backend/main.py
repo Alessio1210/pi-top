@@ -396,26 +396,38 @@ class HardwareManager:
         self._pcf_nibble(hi)
         self._pcf_nibble(lo)
 
+    def _cmd(self, b):
+        """Sendet ein Kommando-Byte an Grove LCD (AiP31068L)."""
+        self.lcd_bus.write_byte_data(self.lcd_addr, 0x80, b)
+
+    def _char(self, b):
+        """Sendet ein Daten-Byte an Grove LCD."""
+        self.lcd_bus.write_byte_data(self.lcd_addr, 0x40, b)
+
     def _init_lcd(self):
         try:
             if self.lcd_kind == 'grove':
+                # Laut offizieller SeeedStudio grove.py Implementierung
                 time.sleep(0.05)
-                self._lcd_cmd(0x38)
-                time.sleep(0.001)
-                self._lcd_cmd(0x0C)
-                time.sleep(0.001)
-                self._lcd_cmd(0x01)
-                time.sleep(0.003)
+                for _ in range(4):
+                    self._cmd(0x28)   # Function Set: 4-bit, 2 lines, 5x8
+                    time.sleep(0.05)
+                self._cmd(0x0C)       # Display on, cursor off
+                time.sleep(0.05)
+                self._cmd(0x01)       # Clear
+                time.sleep(0.05)
+                self._cmd(0x06)       # Entry mode: cursor right, no shift
+                time.sleep(0.05)
             else:
                 time.sleep(0.05)
                 self._pcf_nibble(0x30); time.sleep(0.005)
                 self._pcf_nibble(0x30); time.sleep(0.005)
                 self._pcf_nibble(0x30); time.sleep(0.002)
-                self._pcf_nibble(0x20)                   # 4-bit
-                self._pcf_send(0x28, 0)                  # 2 lines
-                self._pcf_send(0x0C, 0)                  # Display on
-                self._pcf_send(0x06, 0)                  # Entry mode
-                self._pcf_send(0x01, 0)                  # Clear
+                self._pcf_nibble(0x20)
+                self._pcf_send(0x28, 0)
+                self._pcf_send(0x0C, 0)
+                self._pcf_send(0x06, 0)
+                self._pcf_send(0x01, 0)
                 time.sleep(0.003)
             cprint("📟 LCD initialisiert")
         except Exception as e:
@@ -429,11 +441,11 @@ class HardwareManager:
             return
         try:
             if self.lcd_kind == 'grove':
-                self._lcd_cmd(0x01); time.sleep(0.003)
-                self._lcd_cmd(0x80)
-                for c in line1[:16]: self._lcd_data(ord(c))
-                self._lcd_cmd(0xC0)
-                for c in line2[:16]: self._lcd_data(ord(c))
+                self._cmd(0x01); time.sleep(0.05)   # Clear
+                self._cmd(0x80)                      # Cursor Zeile 1
+                for c in line1[:16]: self._char(ord(c))
+                self._cmd(0xC0)                      # Cursor Zeile 2
+                for c in line2[:16]: self._char(ord(c))
             else:
                 self._pcf_send(0x01, 0); time.sleep(0.003)
                 self._pcf_send(0x80, 0)
