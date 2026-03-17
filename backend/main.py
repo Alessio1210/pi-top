@@ -126,9 +126,9 @@ except Exception:
     try:
         import smbus2
         _jbus = smbus2.SMBus(1)
-        _jbus.read_byte(0x20)   # SparkFun Qwiic Joystick default-Adresse
+        _jbus.read_byte(0x11)
         joystick = _jbus
-        print("🕹️  Joystick initialisiert (I2C smbus 0x20)")
+        print("🕹️  Joystick initialisiert (I2C smbus 0x11)")
     except Exception as e:
         joystick = None
         print(f"⚠️ Joystick nicht gefunden: {e}")
@@ -148,8 +148,8 @@ def joystick_zoom_loop():
                 elif v < -0.4: delta = -0.05
                 else:          delta = 0
             else:
-                # smbus: register 0x03 = vertical (0–255, 128 = Mitte)
-                raw = joystick.read_byte_data(0x20, 0x03)
+                # smbus: Register 0x01 = Y-Achse (0–255, 128 = Mitte)
+                raw = joystick.read_byte_data(0x11, 0x01)
                 v   = (raw - 128) / 128.0
                 if   v > 0.4:  delta =  0.05
                 elif v < -0.4: delta = -0.05
