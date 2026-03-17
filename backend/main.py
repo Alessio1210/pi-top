@@ -66,48 +66,38 @@ _last_lcd  = ("", "")    # Cache: nur schreiben wenn Inhalt sich ändert
 _pending_pin        = None   # Vom Keypad eingegebener PIN (für Enrollment)
 _pin_entry_status   = 'idle' # idle | waiting | complete
 
-# ── I2C Keypad (PCF8574, 0x20) ─────────────────────────────────────────────
-KEYPAD_ADDR = 0x20
-KEYPAD_KEYS = [
-    ['1','2','3','A'],
-    ['4','5','6','B'],
-    ['7','8','9','C'],
-    ['*','0','#','D'],
-]
-keypad_bus = None
+# ── UART Keypad (Grove 12-Ch Capacitive, ATtiny1616) ────────────────────────
+# Byte-Werte laut Seeed-Doku: 0xE1='1' … 0xEC='#'
+KEYPAD_UART_MAP = {
+    0xE1:'1', 0xE2:'2', 0xE3:'3',
+    0xE4:'4', 0xE5:'5', 0xE6:'6',
+    0xE7:'7', 0xE8:'8', 0xE9:'9',
+    0xEA:'*', 0xEB:'0', 0xEC:'#',
+}
+keypad_serial = None
 try:
-    import smbus2 as _smbus2
-    for _bus_num in [1, 3, 20, 21]:
+    import serial as _serial
+    for _port in ['/dev/ttyAMA0', '/dev/serial0', '/dev/ttyS0']:
         try:
-            _b = _smbus2.SMBus(_bus_num)
-            _b.read_byte(KEYPAD_ADDR)
-            keypad_bus = _b
-            print(f"⌨️  Keypad initialisiert (Bus {_bus_num}, I2C 0x{KEYPAD_ADDR:02x})")
+            _s = _serial.Serial(_port, baudrate=9600, timeout=0)
+            keypad_serial = _s
+            print(f"⌨️  Keypad initialisiert (UART {_port}, 9600 Baud)")
             break
         except Exception:
-            try: _b.close()
-            except Exception: pass
-    if keypad_bus is None:
-        print(f"⚠️ Keypad nicht gefunden auf Bus 1/3/20/21 (Adresse 0x{KEYPAD_ADDR:02x})")
+            pass
+    if keypad_serial is None:
+        print("⚠️ Keypad UART nicht gefunden (/dev/ttyAMA0, serial0, ttyS0)")
 except Exception as _e:
-    keypad_bus = None
-    print(f"⚠️ Keypad nicht gefunden: {_e}")
+    print(f"⚠️ Keypad UART Fehler: {_e}")
 
 def _scan_keypad_once():
-    """Gibt gedrückte Taste zurück oder None. PCF8574: lower nibble=Reihen, upper=Spalten."""
-    if keypad_bus is None:
+    """Gibt gedrückte Taste zurück oder None. Liest ein Byte vom UART."""
+    if keypad_serial is None:
         return None
     try:
-        for row in range(4):
-            out = 0xF0 | (0x0F ^ (1 << row))
-            keypad_bus.write_byte(KEYPAD_ADDR, out)
-            time.sleep(0.002)
-            val = keypad_bus.read_byte(KEYPAD_ADDR)
-            cols = (val >> 4) & 0x0F
-            if cols != 0x0F:
-                for col in range(4):
-                    if not (cols >> col) & 1:
-                        return KEYPAD_KEYS[row][col]
+        if keypad_serial.in_waiting > 0:
+            b = keypad_serial.read(1)
+            return KEYPAD_UART_MAP.get(b[0])
     except Exception:
         pass
     return None
