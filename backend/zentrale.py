@@ -40,6 +40,74 @@ try:
 except Exception as e:
     print(f"⚠️ Hardware nicht gefunden — Terminal-Simulation aktiv. ({e})")
 
+# ── I2C Keypad (PCF8574, 0x20) ─────────────────────────────────────────────
+KEYPAD_ADDR = 0x20
+KEYPAD_KEYS = [
+    ['1','2','3','A'],
+    ['4','5','6','B'],
+    ['7','8','9','C'],
+    ['*','0','#','D'],
+]
+keypad_bus = None
+try:
+    import smbus2 as _smbus2
+    keypad_bus = _smbus2.SMBus(1)
+    keypad_bus.read_byte(KEYPAD_ADDR)
+    print("⌨️  Keypad initialisiert (I2C 0x20)")
+except Exception as _e:
+    keypad_bus = None
+    print(f"⚠️ Keypad nicht gefunden: {_e}")
+
+def _scan_keypad_once():
+    if keypad_bus is None:
+        return None
+    try:
+        for row in range(4):
+            out = 0xF0 | (0x0F ^ (1 << row))
+            keypad_bus.write_byte(KEYPAD_ADDR, out)
+            time.sleep(0.002)
+            val = keypad_bus.read_byte(KEYPAD_ADDR)
+            cols = (val >> 4) & 0x0F
+            if cols != 0x0F:
+                for col in range(4):
+                    if not (cols >> col) & 1:
+                        return KEYPAD_KEYS[row][col]
+    except Exception:
+        pass
+    return None
+
+def read_pin_input_zentrale(prompt="PIN waehlen", length=4, timeout=30):
+    """Liest PIN vom Keypad oder Terminal. # = Bestätigen, * = Löschen."""
+    pin = ""
+    last_key = None
+    deadline = time.time() + timeout
+    print(f"\n⌨️  {prompt} (Keypad oder Terminal: 4 Ziffern eingeben, Enter = bestätigen)")
+
+    while time.time() < deadline:
+        # Keypad
+        if keypad_bus is not None:
+            key = _scan_keypad_once()
+            if key != last_key:
+                if key is not None:
+                    if key == '*':
+                        pin = pin[:-1]
+                        print(f"\r   PIN: {'*' * len(pin)}{'_' * (length - len(pin))}", end='', flush=True)
+                    elif key == '#':
+                        print()
+                        break
+                    elif key.isdigit() and len(pin) < length:
+                        pin += key
+                        print(f"\r   PIN: {'*' * len(pin)}{'_' * (length - len(pin))}", end='', flush=True)
+                        if len(pin) == length:
+                            time.sleep(0.3)
+                            print()
+                            break
+                last_key = key
+            elif key is None:
+                last_key = None
+        time.sleep(0.05)
+    return pin
+
 def log_to_db(req_data):
     """Loggt den Zugriff in die Datenbank"""
     if not supabase: return
@@ -105,6 +173,43 @@ def hardware_button_loop():
             time.sleep(1)  # Debounce außerhalb des Locks
 
         time.sleep(0.1)
+
+@app.route('/api/enroll_user', methods=['POST'])
+def enroll_user():
+    """Pi 1 sendet Name → Zentrale fragt PIN ab und legt User in Supabase an."""
+    data = request.json
+    name = data.get('name', 'Unbekannt')
+
+    print(f"\n📋 ENROLLMENT: Neuer Benutzer '{name}'")
+    print(f"   Angezeigt: Name von Pforte = {name}")
+
+    def do_enrollment():
+        print(f"\n👤 Name von Pforte: {name}")
+        print("   Bitte PIN für diesen Benutzer eingeben:")
+        pin = read_pin_input_zentrale(prompt=f"PIN fuer {name[:10]}", length=4, timeout=60)
+
+        if len(pin) != 4:
+            print("⚠️  Enrollment abgebrochen (kein PIN eingegeben).")
+            return
+
+        if not supabase:
+            print("⚠️  Supabase nicht verbunden — Enrollment fehlgeschlagen.")
+            return
+
+        try:
+            result = supabase.table('persons').insert({
+                'name': name,
+                'pin': pin,
+                'face_encoding': None,
+            }).execute()
+            print(f"✅ Benutzer '{name}' mit PIN gespeichert (ID: {result.data[0]['id']})")
+            print("   ℹ️  Gesichts-Encoding muss noch via Web-Frontend hinzugefügt werden.")
+        except Exception as e:
+            print(f"⚠️  Supabase Fehler: {e}")
+
+    threading.Thread(target=do_enrollment, daemon=True).start()
+    return jsonify({"success": True, "message": f"Enrollment für '{name}' gestartet"})
+
 
 @app.route('/api/request_access', methods=['POST'])
 def handle_access_request():

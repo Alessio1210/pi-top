@@ -62,6 +62,72 @@ access_state = "IDLE"
 access_cooldown = 0
 door_status = "closed"   # closed | checking | open | denied
 
+# ── I2C Keypad (PCF8574, 0x20) ─────────────────────────────────────────────
+KEYPAD_ADDR = 0x20
+KEYPAD_KEYS = [
+    ['1','2','3','A'],
+    ['4','5','6','B'],
+    ['7','8','9','C'],
+    ['*','0','#','D'],
+]
+keypad_bus = None
+try:
+    import smbus2 as _smbus2
+    keypad_bus = _smbus2.SMBus(1)
+    keypad_bus.read_byte(KEYPAD_ADDR)
+    print("⌨️  Keypad initialisiert (I2C 0x20)")
+except Exception as _e:
+    keypad_bus = None
+    print(f"⚠️ Keypad nicht gefunden: {_e}")
+
+def _scan_keypad_once():
+    """Gibt gedrückte Taste zurück oder None. PCF8574: lower nibble=Reihen, upper=Spalten."""
+    if keypad_bus is None:
+        return None
+    try:
+        for row in range(4):
+            out = 0xF0 | (0x0F ^ (1 << row))
+            keypad_bus.write_byte(KEYPAD_ADDR, out)
+            time.sleep(0.002)
+            val = keypad_bus.read_byte(KEYPAD_ADDR)
+            cols = (val >> 4) & 0x0F
+            if cols != 0x0F:
+                for col in range(4):
+                    if not (cols >> col) & 1:
+                        return KEYPAD_KEYS[row][col]
+    except Exception:
+        pass
+    return None
+
+def read_pin_input(prompt="PIN eingeben", length=4, timeout=20):
+    """Liest PIN vom Keypad. Zeigt * auf LCD. # = Bestätigen, * = Löschen.
+    Gibt eingegebenen PIN-String zurück, oder '' bei Timeout."""
+    pin = ""
+    hw.write_lcd(prompt, "_" * length)
+    last_key = None
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        key = _scan_keypad_once()
+        if key != last_key:
+            if key is not None:
+                if key == '*':
+                    pin = pin[:-1]
+                    hw.write_lcd(prompt, "*" * len(pin) + "_" * (length - len(pin)))
+                elif key == '#':
+                    break
+                elif key.isdigit() and len(pin) < length:
+                    pin += key
+                    display = "*" * len(pin) + "_" * (length - len(pin))
+                    hw.write_lcd(prompt, display)
+                    if len(pin) == length:
+                        time.sleep(0.3)
+                        break
+            last_key = key
+        elif key is None:
+            last_key = None
+        time.sleep(0.05)
+    return pin
+
 # Hardware Konfiguration
 BUZZER_PIN = 6  # A2 auf Foundation Plate ist GPIO 6
 # Wir nutzen gpiozero für einfache Ansteuerung
@@ -150,12 +216,45 @@ def handle_access_flow(person_id, name):
                     if status == "accepted":
                         print(f"✅ Zentrale hat Zugriff GEWAEHRT fuer {name}")
                         hw.write_lcd("ANGENOMMEN", name[:16])
-                        set_led_color("green")
-                        set_ampel("gruen")
-                        door_status = "open"
-                        if buzzer:
-                            buzzer.on(); time.sleep(0.2); buzzer.off()
-                        time.sleep(10)
+                        time.sleep(1)
+
+                        # ── PIN-Abfrage ──────────────────────────────
+                        pin_ok = True
+                        if keypad_bus is not None:
+                            # PIN aus Supabase laden
+                            db_pin = None
+                            if supabase:
+                                try:
+                                    r = supabase.table('persons').select('pin').eq('id', person_id).execute()
+                                    if r.data:
+                                        db_pin = r.data[0].get('pin')
+                                except Exception:
+                                    pass
+
+                            if db_pin:
+                                hw.write_lcd("Bitte PIN", "eingeben:")
+                                entered = read_pin_input("PIN eingeben:", length=4)
+                                if entered == str(db_pin):
+                                    print(f"🔑 PIN korrekt für {name}")
+                                    hw.write_lcd("PIN korrekt", "Willkommen!")
+                                else:
+                                    print(f"❌ Falscher PIN für {name}")
+                                    hw.write_lcd("Falscher PIN", "Zugang verweigert")
+                                    set_led_color("red")
+                                    set_ampel("rot")
+                                    door_status = "denied"
+                                    if buzzer:
+                                        buzzer.on(); time.sleep(0.6); buzzer.off()
+                                    time.sleep(3)
+                                    pin_ok = False
+
+                        if pin_ok:
+                            set_led_color("green")
+                            set_ampel("gruen")
+                            door_status = "open"
+                            if buzzer:
+                                buzzer.on(); time.sleep(0.2); buzzer.off()
+                            time.sleep(10)
                         break
                     elif status == "rejected":
                         print(f"❌ Zentrale hat Zugriff ABGELEHNT fuer {name}")
@@ -1063,6 +1162,19 @@ def capture_face_api():
         
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/api/enroll_unknown', methods=['POST'])
+def enroll_unknown():
+    """Zentrale triggert Enrollment für letzte unbekannte Person.
+    Sendet Name an Zentrale /api/enroll_user → Zentrale fragt PIN ab."""
+    data = request.json or {}
+    name = data.get('name') or last_detected_person.get('name', 'Unbekannt')
+    try:
+        res = requests.post(f"{ZENTRALE_URL}/api/enroll_user", json={"name": name}, timeout=3)
+        return jsonify({"success": res.status_code == 200, "name": name})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+
 
 @app.route('/api/current_status')
 def current_status_api():
