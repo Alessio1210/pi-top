@@ -67,7 +67,7 @@ _pending_pin        = None   # Vom Keypad eingegebener PIN (für Enrollment)
 _pin_entry_status   = 'idle' # idle | waiting | complete
 
 # ── UART Keypad (Grove 12-Ch Capacitive, ATtiny1616) ────────────────────────
-# Byte-Werte laut Seeed-Doku: 0xE1='1' … 0xEC='#'
+import queue as _queue
 KEYPAD_UART_MAP = {
     0xE1:'1', 0xE2:'2', 0xE3:'3',
     0xE4:'4', 0xE5:'5', 0xE6:'6',
@@ -75,6 +75,8 @@ KEYPAD_UART_MAP = {
     0xEA:'*', 0xEB:'0', 0xEC:'#',
 }
 keypad_serial = None
+keypad_queue  = _queue.SimpleQueue()
+
 try:
     import serial as _serial
     for _port in ['/dev/ttyAMA0', '/dev/serial0', '/dev/ttyS0']:
@@ -90,45 +92,51 @@ try:
 except Exception as _e:
     print(f"⚠️ Keypad UART Fehler: {_e}")
 
-def _scan_keypad_once():
-    """Gibt gedrückte Taste zurück oder None. Liest ein Byte vom UART."""
-    if keypad_serial is None:
-        return None
-    try:
-        if keypad_serial.in_waiting > 0:
-            b = keypad_serial.read(1)
-            return KEYPAD_UART_MAP.get(b[0])
-    except Exception:
-        pass
-    return None
+def _keypad_reader():
+    """Hintergrund-Thread: liest UART und legt Tasten in Queue + Debug-Print."""
+    while True:
+        try:
+            if keypad_serial and keypad_serial.in_waiting > 0:
+                b = keypad_serial.read(1)
+                key = KEYPAD_UART_MAP.get(b[0])
+                if key:
+                    print(f"🔢 Keypad: [{key}]", flush=True)
+                    keypad_queue.put(key)
+        except Exception:
+            pass
+        time.sleep(0.02)
 
-def read_pin_input(prompt="PIN eingeben", length=4, timeout=20):
-    """Liest PIN vom Keypad. Zeigt * auf LCD. # = Bestätigen, * = Löschen.
-    Gibt eingegebenen PIN-String zurück, oder '' bei Timeout."""
+if keypad_serial:
+    threading.Thread(target=_keypad_reader, daemon=True).start()
+
+def _scan_keypad_once():
+    """Gibt nächste Taste aus Queue zurück (non-blocking), oder None."""
+    try:
+        return keypad_queue.get_nowait()
+    except _queue.Empty:
+        return None
+
+def read_pin_input(prompt="PIN:", length=4, timeout=10):
+    """Liest PIN vom Keypad. Zeigt Ziffern auf LCD (PIN: 1___).
+    * = löschen, # = bestätigen. Timeout: 10s."""
     pin = ""
     lcd(prompt, "_" * length, force=True)
-    last_key = None
     deadline = time.time() + timeout
     while time.time() < deadline:
         key = _scan_keypad_once()
-        if key != last_key:
-            if key is not None:
-                if key == '*':
-                    pin = pin[:-1]
-                    lcd(prompt, "*" * len(pin) + "_" * (length - len(pin)), force=True)
-                elif key == '#':
+        if key is not None:
+            if key == '*':
+                pin = pin[:-1]
+            elif key == '#':
+                break
+            elif key.isdigit() and len(pin) < length:
+                pin += key
+                if len(pin) == length:
+                    lcd(prompt, pin, force=True)
+                    time.sleep(0.3)
                     break
-                elif key.isdigit() and len(pin) < length:
-                    pin += key
-                    display = "*" * len(pin) + "_" * (length - len(pin))
-                    lcd(prompt, display, force=True)
-                    if len(pin) == length:
-                        time.sleep(0.3)
-                        break
-            last_key = key
-        elif key is None:
-            last_key = None
-        time.sleep(0.05)
+            lcd(prompt, pin + "_" * (length - len(pin)), force=True)
+        time.sleep(0.02)
     return pin
 
 # Hardware Konfiguration
