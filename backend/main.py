@@ -63,6 +63,8 @@ access_cooldown = 0
 door_status = "closed"   # closed | checking | open | denied
 lcd_locked = False        # True während access_flow → AI-Thread schreibt nicht drüber
 _last_lcd  = ("", "")    # Cache: nur schreiben wenn Inhalt sich ändert
+_pending_pin        = None   # Vom Keypad eingegebener PIN (für Enrollment)
+_pin_entry_status   = 'idle' # idle | waiting | complete
 
 # ── I2C Keypad (PCF8574, 0x20) ─────────────────────────────────────────────
 KEYPAD_ADDR = 0x20
@@ -1110,6 +1112,37 @@ def video_feed():
                     mimetype='multipart/x-mixed-replace; boundary=frame')
 
 
+@app.route('/api/request_pin_entry', methods=['POST'])
+def request_pin_entry():
+    """Frontend triggert PIN-Eingabe am physischen Keypad (Pi 1).
+    PIN wird NICHT ans Frontend zurückgegeben — nur Status."""
+    global _pending_pin, _pin_entry_status
+    if _pin_entry_status == 'waiting':
+        return jsonify({'status': 'waiting'})
+    _pending_pin      = None
+    _pin_entry_status = 'waiting'
+
+    def collect_pin():
+        global _pending_pin, _pin_entry_status
+        pin = read_pin_input("Neuer PIN:", length=4, timeout=60)
+        if pin:
+            _pending_pin      = pin
+            _pin_entry_status = 'complete'
+            print(f"🔑 Enrollment-PIN eingegeben ({len(pin)} Stellen)")
+        else:
+            _pin_entry_status = 'idle'
+            print("⚠️ PIN-Eingabe abgebrochen (Timeout)")
+
+    threading.Thread(target=collect_pin, daemon=True).start()
+    return jsonify({'status': 'waiting'})
+
+
+@app.route('/api/pin_entry_status')
+def pin_entry_status():
+    """Gibt nur Status zurück — nie den PIN selbst."""
+    return jsonify({'status': _pin_entry_status})
+
+
 @app.route('/api/capture_face')
 def capture_face_api():
     """Nimmt aktuellen Frame, erkennt Gesicht, gibt Crop-Foto + Encoding zurück."""
@@ -1144,13 +1177,15 @@ def enroll_api():
     """Speichert neue Person mit Gesicht in Supabase, lädt known_faces neu."""
     if not supabase:
         return jsonify({'success': False, 'error': 'Supabase nicht verbunden'})
+    global _pending_pin, _pin_entry_status
     data      = request.json or {}
     first     = data.get('first_name', '').strip()
     last      = data.get('last_name', '').strip()
-    dept      = data.get('department', '').strip()
-    pin       = data.get('pin', '') or None
+    pin       = _pending_pin   # Nur vom Keypad — nie vom Frontend
     encoding  = data.get('encoding', [])
     photo_b64 = data.get('photo', '')
+    _pending_pin      = None   # Nach Enrollment sofort löschen
+    _pin_entry_status = 'idle'
     name = f"{first} {last}".strip()
     if not name or not encoding:
         return jsonify({'success': False, 'error': 'Name und Gesicht erforderlich'})
@@ -1166,8 +1201,6 @@ def enroll_api():
                 print(f"⚠️ Foto-Upload übersprungen: {photo_err}")
 
         row = {'name': name, 'face_encoding': encoding, 'photo_url': photo_url, 'pin': pin}
-        if dept:
-            row['department'] = dept
         result = supabase.table('persons').insert(row).execute()
         new_id = result.data[0]['id']
         load_known_faces()

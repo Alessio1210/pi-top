@@ -11,7 +11,8 @@ function EnrollPage({ onBack }: { onBack: () => void }) {
   const [firstName, setFirstName]   = useState('')
   const [lastName, setLastName]     = useState('')
   const [department, setDepartment] = useState('')
-  const [pin, setPin]               = useState('')
+  const [pinStatus, setPinStatus]   = useState<'idle' | 'waiting' | 'complete'>('idle')
+  const pinPollRef                  = useRef<ReturnType<typeof setInterval> | null>(null)
   const [saving, setSaving]         = useState(false)
   const [saved, setSaved]           = useState<{ id: number; name: string } | null>(null)
   const [saveErr, setSaveErr]       = useState('')
@@ -34,6 +35,28 @@ function EnrollPage({ onBack }: { onBack: () => void }) {
     }
   }
 
+  async function triggerPinEntry() {
+    setPinStatus('waiting')
+    try {
+      await fetch(`${BACKEND}/api/request_pin_entry`, { method: 'POST' })
+      pinPollRef.current = setInterval(async () => {
+        try {
+          const r = await fetch(`${BACKEND}/api/pin_entry_status`)
+          const d = await r.json()
+          if (d.status === 'complete') {
+            setPinStatus('complete')
+            if (pinPollRef.current) clearInterval(pinPollRef.current)
+          } else if (d.status === 'idle') {
+            setPinStatus('idle')
+            if (pinPollRef.current) clearInterval(pinPollRef.current)
+          }
+        } catch { /* ignore */ }
+      }, 500)
+    } catch {
+      setPinStatus('idle')
+    }
+  }
+
   async function handleSave() {
     if (!captured)       return setSaveErr('Zuerst Gesicht aufnehmen')
     if (!firstName.trim()) return setSaveErr('Vorname erforderlich')
@@ -48,7 +71,6 @@ function EnrollPage({ onBack }: { onBack: () => void }) {
           first_name: firstName.trim(),
           last_name:  lastName.trim(),
           department: department.trim(),
-          pin:        pin || null,
           encoding:   captured.encoding,
           photo:      captured.photo,
         }),
@@ -135,19 +157,21 @@ function EnrollPage({ onBack }: { onBack: () => void }) {
 
             <label className="enroll-label">
               PIN
-              <span style={{ fontSize: 8, color: 'var(--text-dim)', marginLeft: 8 }}>WIRD NICHT ANGEZEIGT</span>
+              <span style={{ fontSize: 8, color: 'var(--text-dim)', marginLeft: 8 }}>NUR ÜBER KEYPAD</span>
             </label>
-            <input
-              className="enroll-input"
-              type="password"
-              value={pin}
-              onChange={e => setPin(e.target.value.replace(/\D/g, '').slice(0, 8))}
-              placeholder="••••"
-              autoComplete="new-password"
-            />
-            {pin && (
-              <div className="enroll-pin-hint">
-                {'•'.repeat(pin.length)} · {pin.length} Stellen
+            {pinStatus === 'idle' && (
+              <button className="enroll-capture-btn" onClick={triggerPinEntry} style={{ marginBottom: 4 }}>
+                ⌨ PIN ÜBER KEYPAD EINGEBEN
+              </button>
+            )}
+            {pinStatus === 'waiting' && (
+              <div className="enroll-pin-hint" style={{ color: 'var(--yellow)' }}>
+                ◌ Warte auf Keypad-Eingabe... (4 Ziffern + #)
+              </div>
+            )}
+            {pinStatus === 'complete' && (
+              <div className="enroll-pin-hint" style={{ color: 'var(--green)' }}>
+                ■ PIN gesetzt · <span style={{ cursor: 'pointer', textDecoration: 'underline' }} onClick={triggerPinEntry}>Neu eingeben</span>
               </div>
             )}
 
