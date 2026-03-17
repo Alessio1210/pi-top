@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import './index.css'
 
 // Dynamisch — funktioniert egal von welchem Gerät aus zugegriffen wird
@@ -40,108 +40,13 @@ function formatTime(d: Date) {
   return d.toTimeString().slice(0, 8)
 }
 
-const BASE_SIZE = 80
-const KNOB_SIZE = 28
-const JOYSTICK_MAX = (BASE_SIZE - KNOB_SIZE) / 2
-
-function JoystickWidget({ zoom, onZoomChange }: { zoom: number; onZoomChange: (z: number) => void }) {
-  const offsetRef   = useRef(0)
-  const dragging    = useRef(false)
-  const animFrame   = useRef(0)
-  const zoomRef     = useRef(zoom)
-  const startY      = useRef(0)
-  const [offsetDisplay, setOffsetDisplay] = useState(0)
-  const [isDragging, setIsDragging]       = useState(false)
-
-  useEffect(() => { zoomRef.current = zoom }, [zoom])
-
-  const tick = useCallback(() => {
-    const rate = -(offsetRef.current / JOYSTICK_MAX) * 0.04
-    const next = Math.max(1.0, Math.min(3.0, zoomRef.current + rate))
-    zoomRef.current = next
-    onZoomChange(next)
-    if (dragging.current) animFrame.current = requestAnimationFrame(tick)
-  }, [onZoomChange])
-
-  const onPointerDown = (e: React.PointerEvent) => {
-    dragging.current = true
-    setIsDragging(true)
-    startY.current = e.clientY
-    ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
-    animFrame.current = requestAnimationFrame(tick)
-  }
-
-  const onPointerMove = (e: React.PointerEvent) => {
-    if (!dragging.current) return
-    const dy = e.clientY - startY.current
-    const clamped = Math.max(-JOYSTICK_MAX, Math.min(JOYSTICK_MAX, dy))
-    offsetRef.current = clamped
-    setOffsetDisplay(clamped)
-  }
-
-  const onPointerUp = () => {
-    dragging.current = false
-    setIsDragging(false)
-    cancelAnimationFrame(animFrame.current)
-    offsetRef.current = 0
-    setOffsetDisplay(0)
-  }
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, padding: '12px 0' }}>
-      <div style={{ fontSize: 9, letterSpacing: 2, color: 'var(--text-dim)', marginBottom: 4 }}>KAMERA-ZOOM</div>
-      <div style={{
-        width: BASE_SIZE, height: BASE_SIZE, borderRadius: '50%',
-        border: '1px solid var(--border)', background: 'rgba(255,255,255,0.02)',
-        position: 'relative', userSelect: 'none',
-      }}>
-        {/* Vertikale Führungslinie */}
-        <div style={{
-          position: 'absolute', left: '50%', top: 6, bottom: 6,
-          width: 1, background: 'rgba(255,255,255,0.08)',
-          transform: 'translateX(-50%)',
-        }} />
-        {/* Knob */}
-        <div
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
-          onPointerCancel={onPointerUp}
-          style={{
-            width: KNOB_SIZE, height: KNOB_SIZE, borderRadius: '50%',
-            background: isDragging ? 'var(--green)' : 'rgba(0,255,100,0.6)',
-            border: '1px solid var(--green)',
-            boxShadow: isDragging ? '0 0 10px var(--green)' : '0 0 4px var(--green)',
-            position: 'absolute', left: '50%', top: '50%',
-            transform: `translate(-50%, calc(-50% + ${offsetDisplay}px))`,
-            transition: isDragging ? 'none' : 'transform 0.25s cubic-bezier(.22,1,.36,1)',
-            cursor: isDragging ? 'grabbing' : 'grab',
-            touchAction: 'none',
-          }}
-        />
-      </div>
-      <div style={{ fontSize: 10, color: zoom > 1.05 ? 'var(--green)' : 'var(--text-dim)', letterSpacing: 1, fontFamily: 'monospace' }}>
-        {zoom.toFixed(1)}×
-      </div>
-      {zoom > 1.05 && (
-        <div
-          onClick={() => { zoomRef.current = 1.0; onZoomChange(1.0) }}
-          style={{ fontSize: 8, letterSpacing: 1, color: 'var(--text-dim)', cursor: 'pointer', textDecoration: 'underline' }}
-        >
-          RESET
-        </div>
-      )}
-    </div>
-  )
-}
 
 export default function App() {
   const [person, setPerson]     = useState<Person | null>(null)
   const [stats, setStats]       = useState<Stats>({ total_persons: 0, detections_today: 0 })
   const [connected, setConnected] = useState(false)
   const [log, setLog]           = useState<LogEntry[]>([])
-  const [zoomLevel, setZoomLevel] = useState(1.0)
-  const logIdRef                = useRef(0)
+const logIdRef                = useRef(0)
   const now                     = useClock()
 
   useEffect(() => {
@@ -323,7 +228,6 @@ export default function App() {
                 <img
                   src={`${BACKEND}/video_feed`}
                   alt="Kamera Stream"
-                  style={{ transform: `scale(${zoomLevel})`, transformOrigin: 'center', transition: 'transform 0.1s' }}
                 />
                 <div className="camera-overlay">
                   <div className="cam-corner tl" />
@@ -399,14 +303,6 @@ export default function App() {
                 <span className="stat-sub">In der Datenbank</span>
               </div>
             </div>
-          </div>
-
-          {/* Joystick Zoom */}
-          <div className="panel" style={{ borderTop: '1px solid var(--border)', alignItems: 'center' }}>
-            <div className="panel-header">
-              <span className="panel-label">Kamera-Steuerung</span>
-            </div>
-            <JoystickWidget zoom={zoomLevel} onZoomChange={setZoomLevel} />
           </div>
 
           {/* System info */}
