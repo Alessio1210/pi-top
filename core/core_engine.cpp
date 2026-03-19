@@ -110,7 +110,7 @@ public:
       writeNibble(0x30);
       usleep(150);
       writeNibble(0x20); // 4-bit mode
-      sendByte(0x28, 0); // 2 lines
+      sendByte(0x28, d0); // 2 lines
       sendByte(0x0C, 0); // Display on
       sendByte(0x01, 0); // Clear
       usleep(2000);
